@@ -1,0 +1,2987 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Analyse RGI and DeepARG results
+
+Install packages if needed.
+
+```{r, packages}
+# install.packages("vegan")
+# install.packages(c("reshape2", "ggplot2", "dplyr"))
+
+# Requeires bioconductor newer versions # Check if used in paper
+# install("edgeR")
+
+
+# MAybee??? install.packages("hilldiv")
+
+Sys.setlocale("LC_ALL", "C.UTF-8")
+```
+
+```{r, packages2}
+
+library("phyloseq") # Metagenome data object lib
+library(vegan) # package for community ecologists
+library(jsonlite)
+
+library(reshape2)
+library(dplyr)
+
+library(hilldiv) # Normalization TSS
+
+# Plots
+library("ggplot2")
+library("gplots")
+library(RColorBrewer) # For color palettes
+library(microViz)
+
+library(metagenomeSeq)
+
+
+# From Mgnify examples
+library(IRdisplay)    
+library(plyr)
+library(SIAMCAT)
+library(tidyverse)
+
+library(microbiomeMarker)
+library(microbiome) # Fro normalization
+# library(MGnifyR) Might use this w published data?
+
+```
+
+## Define inputs
+
+```{r, inputs}
+
+# RGI Results
+
+# Old RGI version CARD 3.2.3 and rgi     5.2.0
+# ARG_CONTIGS_OLD = "../Resistance_genes/AMR_genes_RGI_contigs.csv"
+
+# New RGI version 6.0.3 in singularity container
+ARG_CONTIGS = "../Resistance_genes/AMR_genes_RGI_contigs_new.csv"
+
+# Only gene with > 90% sequence identity with DB ref.
+ARG_SCAFFOLDS_F = "../Resistance_genes/AMR_genes_RGI_scaffolds_filtered.csv"
+#ARG_SCAFFOLDS = "../Resistance_genes/AMR_genes_RGI_scaffolds.csv"
+
+# RESFINDER
+ARG_RESFINDER = ""
+
+# Deep ARG
+ARG_DEEPARG = "../Resistance_genes/ARG_genes_DeepARG_full.csv"
+
+# Metadata
+METADATA_PATH =  "../sampleMetadata.csv"
+
+CARDDB = "~/DB/CARD_02_2024/card.json"
+
+# Taxonomy data
+TAX_KRAKEN = "../../NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/kraken_res/"
+# TAX_mOTU = "../../NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/mOTU_res/"
+
+
+# MGE
+
+```
+
+## Function Definitions
+
+```{r, warning=FALSE, message=FALSE, function_definitions}
+source("../src/comperative_metagen_definitions.r", local = knitr::knit_global())
+```
+
+## Read data
+
+```{r, read_data}
+
+arg_contig_t <- read_ARG_data(ARG_CONTIGS)
+
+arg_scaffolds_t <- read_ARG_data(ARG_SCAFFOLDS_F)
+
+rownames(arg_scaffolds_t["Escherichia coli EF-Tu mutants conferring resistance to Pulvomycin",])=rownames("Ecol_EFTu_PLV")
+
+
+arg_deep_t <- read_ARG_data(ARG_DEEPARG)
+
+# deep arg has more samples than needed 
+# find the difference and remove columns from deep arg
+difference_ids <- setdiff(names(arg_deep_t), names(arg_contig_t))
+arg_deep_t <- arg_deep_t[, !(names(arg_deep_t) %in% difference_ids)]
+
+```
+
+Read metadata table.
+
+```{r, metadata_read}
+metadata <- tryCatch({
+  read.csv(METADATA_PATH, header = TRUE, colClasses = c(Date = "character", Dairy_farming="character", Meat_production="character", Metal_processing="character", Washrooms="character"))
+}, error = function(e) {
+  stop("Failed to read metadata: ", e$message)
+})
+metadata$Date <- as.Date(metadata$Date, format = "%d.%m")
+if (any(is.na(metadata$Date))) {
+  stop("Failed to convert some dates. Please check the date format.")
+}
+```
+
+
+
+
+### Create phyloseq object
+
+```{r, phyloseq_object}
+#physeq_contigs <- createPhyloseqObject(arg_contig_t, METADATA_PATH)
+physeq_scaffolds <- createPhyloseqObject(arg_scaffolds_t, METADATA_PATH)
+physeq_deep <- createPhyloseqObject(arg_deep_t, METADATA_PATH)
+```
+
+
+## Filtering
+
+*Three different filtering levels were applied and compared:*
+
+ps_scaffolds_filtered: Least strict, remove singletons (OTUs with only one read across all samples). 
+ps_scaffolds_filtered2: Intermediate, removed taxa not seen more than 3 times in 20% of samples. 
+ps_scaffolds_filtered3: Most strict, filter OTUs to include only those with at least 7 reads in 5% of the samples.
+
+The filtering impact was assessed by: Comparing the number of ARG scaffolds before and after filtering. - Calculating the total sequence count before and after filtering. - Computing the percentage of sequences dropped from the original dataset. Visualizing sequencing depth across samples using boxplots for different filtering levels.
+
+This filtering approach aimed to remove low-abundance reads likely to be sequencing errors while preserving meaningful biological variation in the dataset.
+
+Remove low abundance reads that are probably sequencing errors.
+
+```{r, counts}
+print("Total sequence count before filtering")
+sum(arg_scaffolds_t)
+print("ARG scaffolds before filtering")
+dim(arg_scaffolds_t)
+```
+
+```{r, filtering}
+
+# Less strict filterring option
+# remove singletons. 
+ps_scaffolds_filtered = filter_taxa(physeq_scaffolds, function(x) sum(x) > 1, prune=TRUE)
+
+
+# Remove taxa not seen more than 3 times in at least 20% of the samples. This protects against an OTU with small mean & trivially large C.V.
+ps_scaffolds_filtered2 = filter_taxa(physeq_scaffolds, function(x) sum(x > 3) > (0.2*length(x)), TRUE)
+
+# Filter OTUs to include only those with at least 7 reads in 5% of the samples
+ps_scaffolds_filtered3 = filter_taxa(physeq_scaffolds, function(x) sum(x > 7) > (0.05 * length(x)), TRUE)
+
+
+max_difference = max(sample_sums(ps_scaffolds_filtered))/min(sample_sums(ps_scaffolds_filtered))
+sprintf("The max difference in sequencing depth is %s", max_difference)
+
+# Convert the filtered OTU table to a data frame
+data_otu_filt = data.frame(otu_table(ps_scaffolds_filtered))
+data_otu_filt2 = data.frame(otu_table(ps_scaffolds_filtered2))
+data_otu_filt3 = data.frame(otu_table(ps_scaffolds_filtered3))
+
+# Print the dimensions of the filtered data
+print("Phyloseq ARG scaffolds after filtering")
+dim(data_otu_filt)
+dim(data_otu_filt2)
+dim(data_otu_filt3)
+
+# Print the total sequence count after filtering
+print("Filtered sequence count")
+sum(data_otu_filt)
+print("Filtered sequence count filt 2")
+sum(data_otu_filt2)
+
+print("Filtered sequence count filt 3")
+sum(data_otu_filt3)
+
+# Calculate and print the percentage of sequences dropped from the original dataset
+original_seq_count = sum(data.frame(otu_table(physeq_scaffolds)))
+filtered_seq_count = sum(data_otu_filt)
+seq_dropped_percentage = ((original_seq_count - filtered_seq_count) / original_seq_count) * 100
+
+filtered_seq_count = sum(data_otu_filt2)
+seq_dropped_percentage2 = ((original_seq_count - filtered_seq_count) / original_seq_count) * 100
+
+filtered_seq_count = sum(data_otu_filt3)
+seq_dropped_percentage3 = ((original_seq_count - filtered_seq_count) / original_seq_count) * 100
+
+
+print("Sequence % dropped from the dataset:")
+seq_dropped_percentage
+print("Sequence % dropped from the dataset 2:")
+seq_dropped_percentage2
+print("Sequence % dropped from the dataset 3:")
+seq_dropped_percentage3
+
+
+options(repr.plot.width=4, repr.plot.height=5)
+
+boxplot(sample_sums(physeq_scaffolds), main="Sequencing depth across samples No filt", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(physeq_scaffolds))$stats, labels=boxplot.stats(sample_sums(physeq_scaffolds))$stats, x=1.25)
+
+boxplot(sample_sums(ps_scaffolds_filtered), main="Sequencing depth across samples remove singletons", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_scaffolds_filtered))$stats, labels=boxplot.stats(sample_sums(ps_scaffolds_filtered))$stats, x=1.25)
+
+boxplot(sample_sums(ps_scaffolds_filtered2), main="Sequencing depth across samples 3 by 20%", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_scaffolds_filtered2))$stats, labels=boxplot.stats(sample_sums(ps_scaffolds_filtered2))$stats, x=1.25)
+boxplot(sample_sums(ps_scaffolds_filtered3), main="Sequencing depth across samples 7 in 5%", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_scaffolds_filtered3))$stats, labels=boxplot.stats(sample_sums(ps_scaffolds_filtered3))$stats, x=1.25)
+
+```
+
+```{r, warning=FALSE, message=FALSE, fig.width=10, fig.height=10, viz_phyloseq}
+visualizePhyseqData(ps_scaffolds_filtered)
+```
+
+```{r, warning=FALSE, message=FALSE, viz_phyloseq2, fig.width=10, fig.height=10, }
+visualizePhyseqData(ps_scaffolds_filtered2)
+```
+
+```{r, warning=FALSE, message=FALSE, viz_phyloseq3, fig.width=10, fig.height=10, }
+visualizePhyseqData(ps_scaffolds_filtered3)
+```
+
+
+## CARD DB Create A gene annotations from 
+
+From ARG matrix create and search for gene groups, resistance mechanisms and susceptible antibiotics in CARD database.
+
+```{r, crad}
+
+filtered_args_t <- as.data.frame(otu_table(ps_scaffolds_filtered))
+
+# Some genes was not found in the CARD database, because gene names had slight changes.
+gene_list <- c(
+  "AAC6_30_AAC6_Ib","AAC(6')-Ib'","AAC(6')-Ib-cr1","AAC(6')-Ib-cr3", "AAC(6')-Ib-cr9", "AAC(6')-Ib4", "AAC(6')-Ib7", "AAC(6')-Ib8", 
+  "AAC(6')-Ib9", "AAC6_Ie_APH2_Ia", "AAC(6')-IIa", "ANT(2'')-Ia", "ANT3II_ANT6II", "ANT(3'')-IIa", "ANT(3'')-IIc", "ANT(4')-Ib",
+  "APH(2'')-IIIa", "APH(3'')-Ib", "APH(3')-Ia",  "APH(3')-IIIa", "APH(3')-VIa", "APH(3')-VIb","catA1", "EBR-1",  "Ecol_AcrR_MULT",
+  "Ecol_ampC_BLA", "Ecol_MarR_MULT","fosA5","Lreu_cat-TC",
+  "mef(C)","mef(J)","pp_cat", "RSA1-1","tet(X4)", "tet(X6)", "tet(32)","tet(36)","tet(37)", "tet(M)", "tet(O)", "tet(Q)", "tet(X)",
+  "tet(S)", "tet(T)", "tet(W)", "vanR_in_vanO_cl"
+)
+
+card_tax_t <- NA
+card_tax_t <- process_card_data(filtered_args_t)
+
+
+#
+# SEPERATE DRUG CLASSES INTO INDIVIDUAL NAMES
+#
+
+# Assuming tax_t is your data frame and DrugClass is the column of interest
+unique_drug_classes <- card_tax_t %>%
+  # Separate the DrugClass column into rows by splitting on ";"
+  separate_rows(DrugClass, sep = ";") %>%
+  # Select unique DrugClass names
+  distinct(DrugClass) %>%
+  # Pull the DrugClass column to get a vector of unique drug class names
+  pull(DrugClass)
+
+#unique_drug_classes
+
+
+unique_amr_families <- card_tax_t %>%
+  # Separate the DrugClass column into rows by splitting on ";"
+  separate_rows(AMRGeneFamily, sep = ";") %>%
+  # Select unique DrugClass names
+  distinct(AMRGeneFamily) %>%
+  # Pull the DrugClass column to get a vector of unique drug class names
+  pull(AMRGeneFamily)
+
+#unique_amr_families
+
+unique_amr_categories <- card_tax_t %>%
+  # Separate the DrugClass column into rows by splitting on ";"
+  separate_rows(AntibioticCategory, sep = ";") %>%
+  # Select unique DrugClass names
+  distinct(AntibioticCategory) %>%
+  # Pull the DrugClass column to get a vector of unique drug class names
+  pull(AntibioticCategory)
+
+#unique_amr_categories
+
+```
+
+```{r, parse-card}
+# Create the drug class counts
+drug_class_counts <- create_drug_class_counts(filtered_args_t, card_tax_t, unique_drug_classes)
+
+# Create the AMR families counts
+amr_families_counts <- create_amr_families_counts(filtered_args_t, card_tax_t, unique_amr_families)
+
+# Create the AMR categories counts
+amr_categories_counts <- create_amr_categories_counts(filtered_args_t, card_tax_t, unique_amr_categories)
+
+# Create the taxonomy table
+tax_t_drugs <- create_taxonomy_table(card_tax_t)
+
+```
+
+### Plot read abundance.
+
+```{r, plot_abundance, fig.width=10, fig.height=10}
+
+plot <- plot_ARGs(filtered_args_t)
+# Option 1: Save to file with specific dimensions
+ggsave("../plots/amr_count.svg", plot, width = 15, height = 8, dpi = 300)
+
+# Option 2: Display in RStudio with specific dimensions
+dev.new(width = 15, height = 8)
+print(plot)
+
+plot2 <- plot_ARGs(drug_class_counts, "Drug Classes")
+
+ggsave("../plots/amr_drug_class.svg", plot2, width = 15, height = 8, dpi = 300)
+
+# Option 2: Display in RStudio with specific dimensions
+dev.new(width = 15, height = 8)
+print(plot2)
+
+plot3 <- plot_ARGs(amr_families_counts, "AMR families")
+ggsave("../plots/amr_families.svg", plot3, width = 15, height = 8, dpi = 300)
+
+# Option 2: Display in RStudio with specific dimensions
+dev.new(width = 15, height = 8)
+print(plot3)
+
+plot4 <- plot_ARGs(amr_categories_counts, "AMR categories")
+ggsave("../plots/amr_categories.svg", plot4, width = 15, height = 8, dpi = 300)
+
+# Option 2: Display in RStudio with specific dimensions
+dev.new(width = 15, height = 8)
+
+print(plot)
+print(plot2)
+print(plot3)
+print(plot4)
+#plot_ARGs(arg_deep_t)
+#lot_ARGs(arg_contig_t)
+
+```
+
+### Create phyloseq object
+
+```{r, create_phyloseq_object}
+
+physeq_drug_class <- createPhyloseqObject(drug_class_counts, METADATA_PATH)
+physeq_amr_families <- createPhyloseqObject(amr_families_counts, METADATA_PATH)
+physeq_amr_categories <- createPhyloseqObject(amr_categories_counts, METADATA_PATH)
+physeq_deep <- createPhyloseqObject(arg_deep_t, METADATA_PATH)
+```
+
+## Rarefaction curve
+
+```{r, plot_rare}
+
+
+# suppressWarnings({
+#   # Your code block
+#   plotRareCurve(filtered_args_t)
+# })
+
+```
+
+```{r, plot_rare2}
+
+# suppressWarnings({
+#   # Your code block
+#   plotRareCurve(arg_deep_t)
+# })
+
+```
+
+```{r, plotrare3}
+
+# suppressWarnings({
+#   # Your code block
+#   plotRareCurve(as.data.frame(otu_table(ps_scaffolds_filtered3)))
+# })
+
+```
+
+
+Create summary for specific genes
+
+```{r, summary}
+result <- as.data.frame(summary(t(otu_table(ps_scaffolds_filtered))))
+
+library(stringr)
+result %>% filter(str_detect(Var2, "OXA"))
+```
+
+```{r, warning=FALSE, message=FALSE, viz_physeq2, fig.width=10, fig.height=10}
+
+visualizePhyseqData(ps_scaffolds_filtered)
+
+```
+
+
+```{r, fig.width=10, fig.height=10}
+visualizePhyseqData(physeq_drug_class)
+```
+
+## Sample normalization
+
+### kraken2 mapped read normalization
+
+```{r, kraken2}
+
+# Get from Kraken2 results Bacterial counts for a samoke
+kraken2 <- process_kraken_reports(metadata, TAX_KRAKEN)
+
+
+# Make sure that Kraken and arg matrix have same matching column names
+col_names <- intersect(names(arg_scaffolds_t), kraken2$Sample)
+
+print(kraken2)
+```
+
+```{r, normalize_k2}
+
+# Normalize contigs by bacterial reads
+# create new dataframe
+data_normalized_k2 <- as.data.frame(otu_table(ps_scaffolds_filtered))
+for (col_name in col_names) {
+  data_normalized_k2[[col_name]] <- data_normalized_k2[[col_name]] / kraken2[kraken2$Sample == col_name, "BacterialReads_Kraken"]
+}
+
+```
+
+```{r, normalize_k2_deep}
+col_names <- intersect(names(arg_deep_t), kraken2$Sample)
+
+# Normalize DeepARG contigs by bacterial reads
+# create new dataframe
+data_deep_normalized_k2 <- arg_deep_t
+for (col_name in col_names) {
+  data_deep_normalized_k2[[col_name]] <- data_deep_normalized_k2[[col_name]] / kraken2[kraken2$Sample == col_name, "BacterialReads_Kraken"]
+}
+
+```
+
+
+### decostand Frequency
+
+normalization by frequency
+
+```{r, normalize_frq}
+# Normalize the data
+data_normalized <- decostand(arg_scaffolds_t, method = "frequency")
+
+ps_freq <- ps_scaffolds_filtered3
+otu_table(ps_freq) = otu_table(data_normalized, taxa_are_rows = TRUE)
+
+
+```
+
+### TSS normalization
+
+```{r, tss}
+
+# make TSS normalization
+data_normalized_tss <- tss(otu_table(ps_scaffolds_filtered))
+data_normalized_tss<-as.data.frame(data_normalized_tss)
+data_normalized_tss$ARG <- rownames(otu_table(ps_scaffolds_filtered))
+
+# without ARG colllumns
+data_normalized_deep_tss <- tss(arg_deep_t[, !(names(arg_deep_t) %in% c("ARG"))])
+
+```
+
+```{r, qqp}
+# CREATE QQPLOT
+
+# for loop trhough data samples
+for (i in 1:ncol(arg_scaffolds_t)) {
+  qqplot(data_normalized[,i], data_normalized_tss[,i], main = colnames(arg_scaffolds_t)[i])
+}
+
+```
+
+### TSS.2
+
+```{r, tss2}
+relab_ps = transform_sample_counts(ps_scaffolds_filtered, function(x) x/sum(x))
+
+psglom = tax_glom(relab_ps, "ARG")
+top_tss_ps = filter_taxa(psglom, function(x) mean(x) > 0.01, TRUE)
+summarize_phyloseq(top_tss_ps)
+```
+
+### CSS normalization
+
+```{r, css}
+ps_scaffolds_CSS = microbiomeMarker::normalize(ps_scaffolds_filtered, method="CSS")
+ps_scaffolds_CSS3 = microbiomeMarker::normalize(ps_scaffolds_filtered3, method="CSS")
+ps_drugs_CSS = microbiomeMarker::normalize(physeq_drug_class, method="CSS")
+
+psglom_sc = tax_glom(ps_scaffolds_CSS, "ARG")
+top15 = names(sort(taxa_sums(psglom_sc), decreasing=TRUE)[1:15])
+top15_css_ps = prune_taxa(top15, psglom_sc)
+summarize_phyloseq(ps_scaffolds_CSS)
+
+plot_bar(top15_css_ps, fill="Regional_Hospital", title="Cumulative sum scaling") + 
+    theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(), panel.background=element_rect(fill=NA), panel.grid.major=element_line(colour="#ebebeb")) + 
+    labs(x=NULL)
+
+psglom_sc = tax_glom(ps_scaffolds_CSS3, "ARG")
+top15 = names(sort(taxa_sums(psglom_sc), decreasing=TRUE)[1:15])
+top15_css_ps = prune_taxa(top15, psglom_sc)
+summarize_phyloseq(ps_scaffolds_CSS3)
+
+plot_bar(top15_css_ps, fill="Regional_Hospital", title="Cumulative sum scaling") + 
+    theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(), panel.background=element_rect(fill=NA), panel.grid.major=element_line(colour="#ebebeb")) + 
+    labs(x=NULL)
+
+```
+
+```{r, mrexp}
+# Create a MRexperiment object
+mrExp <- phyloseq_to_metagenomeSeq(ps_scaffolds_filtered3)
+
+# Noramlization
+css_norm <- cumNorm(mrExp)
+
+
+# Assuming css_norm is your CSS normalized MRexperiment object
+# Extract normalized counts
+data_normalized_css <- MRcounts(css_norm, norm=TRUE)
+
+# convert to table fromat
+tmp <- ps_scaffolds_filtered3
+otu_table(tmp) = otu_table(data_normalized_css, taxa_are_rows = TRUE)
+
+
+```
+
+### CLR (Centered log ratio.)
+
+```{r, clr}
+library(compositions)
+data_normalized_clr <- clr(otu_table(ps_scaffolds_filtered))
+
+# convert to data frame
+data_normalized_clr <- as.data.frame(data_normalized_clr)
+
+# add to physeq object
+
+ps_clr <- ps_scaffolds_filtered3
+otu_table(ps_clr) = otu_table(data_normalized_clr, taxa_are_rows = TRUE)
+
+
+```
+
+### Plot Normalized contigs
+
+```{r, plot_normalized, fig.width=10, fig.height=10}
+library(gridExtra)
+
+colnames(data_normalized_k2) <- sapply(colnames(data_normalized_k2), function(x) {
+if (x %in% rownames(metadata)) {
+  return(metadata$Sample[rownames(metadata) == x])
+} else {
+  return(x)
+  }
+})
+
+# Verify the new column names
+print(colnames(data_normalized_k2))
+  
+
+p1 <- plot_ARGs(data_normalized, "Normalized ARGs", "Frequency")
+p2 <- plot_ARGs(data_normalized_k2, "Normalized ARGs Bact Reads", "Relative Counts")
+
+#p3 <- plot_ARGs(data_normalized_css, "Normalized ARGs CSS")
+CSS2<- as.data.frame(otu_table(ps_scaffolds_CSS))
+CSS2$ARG <- rownames(otu_table(ps_scaffolds_CSS))
+p3 <- plot_ARGs(CSS2, "Normalized ARGs CSS 2")
+
+p4 <- plot_ARGs(data_normalized_tss, "Normalized ARGs TSS",)
+
+p5 <- plot_ARGs(data_normalized_clr, "Normalized ARGs CLR")
+
+grid.arrange(p1, p2, p3, p4, p5, ncol=2, nrow=4)
+
+# Alternative approach using cowplot for better control
+library(cowplot)
+plot_grid(p1, p2, p3, p4, p5,
+          ncol = 2,
+          align = "hv",
+          labels = c("A", "B", "C", "D", "E"),
+          scale = 0.9)
+
+
+
+```
+
+```{r, compare, fig.width=10, fig.height=10}
+compare_normalizations(ps_scaffolds_filtered)
+```
+
+
+### Plot abundance
+
+Basic data set stats after filtering.
+
+```{r, plot_abund, warning=FALSE, message=FALSE, fig.width=12, fig.height=8}
+
+
+ps_scaffolds_filtered %>%
+    ps_mutate(Group = factor(sample_data(physeq_amr_categories)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+ps_scaffolds_filtered3 %>%
+    ps_mutate(Group = factor(sample_data(physeq_amr_categories)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+ps_scaffolds_CSS %>%
+    ps_mutate(Group = factor(sample_data(physeq_amr_categories)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+ps_scaffolds_CSS3 %>%
+    ps_mutate(Group = factor(sample_data(physeq_amr_categories)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+ps_freq %>%
+    ps_mutate(Group = factor(sample_data(physeq_amr_categories)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+
+```
+```{r, fig.width=12, fig.height=8}
+
+physeq_drug_class %>%
+    ps_mutate(Group = factor(sample_data(physeq_amr_categories)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+physeq_amr_categories %>%
+    ps_mutate(Group = factor(sample_data(physeq_amr_categories)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+
+physeq_amr_families %>%
+    ps_mutate(Group = factor(sample_data(physeq_amr_categories)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+```
+
+## Alpha diversity
+
+Calculate diversity metrics
+
+```{r, warning=FALSE, message=FALSE, alpha_div}
+options(repr.plot.width=12, repr.plot.height=3)
+
+### No normalization
+plot_richness(ps_scaffolds_filtered, x="City", color="City", title="Removed Singletons", measures=c( "Shannon", "Simpson")) + 
+    geom_boxplot() + 
+    theme_bw() +
+    labs(x='', color = "City")
+
+plot_richness(ps_scaffolds_filtered3, x="City", color="City", title="Filtered diversity", measures=c("Shannon", "Simpson")) + 
+    geom_boxplot() + 
+    theme_bw() +
+    labs(x='', color = "City")
+
+
+plot_richness(ps_scaffolds_CSS, x="City", color="City", title="Removed Singletons", measures=c( "Shannon", "Simpson")) + 
+    geom_boxplot() + 
+    theme_bw() +
+    labs(x='', color = "City")
+
+plot_richness(ps_scaffolds_CSS3, x="City", title="CSS filtered", measures=c( "Shannon", "Simpson"), sortby = "Shannon") + 
+    geom_boxplot() + 
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),legend.position = "right")
+
+```
+
+```{r, warning=FALSE, message=FALSE,alpha_div_hospital}
+options(repr.plot.width=12, repr.plot.height=3)
+
+### No normalization
+plot_richness(ps_scaffolds_filtered, x="Regional_Hospital", color="Regional_Hospital", title="Regional Hospital in city", measures=c("Chao1", "Fisher", "Shannon", "Simpson")) + 
+    geom_boxplot() + 
+    theme_bw() +
+    theme(legend.position = "none")
+
+```
+
+```{r, warning=FALSE, message=FALSE, alpha_div_H_type}
+options(repr.plot.width=12, repr.plot.height=3)
+
+### No normalization
+plot_richness(ps_scaffolds_filtered, x="Hospital_Type", color="Hospital_Type", title="Hospital Type", measures=c("Chao1", "Fisher", "Shannon", "Simpson")) + 
+    geom_boxplot() + 
+    theme_bw() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+```
+Industrial_wastewater_impact
+
+```{r, warning=FALSE, message=FALSE, alpha_div_ww}
+options(repr.plot.width=12, repr.plot.height=3)
+
+### No normalization
+plot_richness(ps_scaffolds_filtered3, x="Industrial_wastewater_impact", color="Industrial_wastewater_impact", title="No normalization", measures=c ("Chao1", "Shannon", "Simpson")) + 
+    geom_boxplot() + 
+    theme_bw() +
+    labs(x='', color = "Industrial_wastewater_impact")
+
+### Cumulative sum scaling
+plot_richness(ps_scaffolds_CSS, x="Industrial_wastewater_impact", color="Industrial_wastewater_impact", title="Cumulative sum scaling", measures=c("Chao1", "Shannon", "Simpson")) +
+    geom_boxplot() + 
+    theme_bw() +
+    labs(x='', color = "Industrial_wastewater_impact")
+
+```
+
+Population diversity plots
+
+```{r, warning=FALSE, message=FALSE, alpha_div_pop}
+options(repr.plot.width=12, repr.plot.height=3)
+
+
+plot_richness(ps_scaffolds_filtered3, x="Population", color="Population", title="No normalization", measures=c("Observed", "Chao1", "ACE", "Shannon", "Simpson")) + 
+    geom_boxplot() + 
+    theme_bw() +
+    labs(x='', color = "Population")
+
+### No normalization
+plot_richness(ps_scaffolds_filtered3, x="Population", color="Population", title="No normalization", measures=c("Observed", "Chao1", "ACE", "Shannon", "Simpson")) + 
+    geom_boxplot() + 
+    theme_bw() +
+    labs(x='', color = "Population")
+
+### Cumulative sum scaling
+plot_richness(ps_scaffolds_CSS, x="Population", color="Population", title="Cumulative sum scaling", measures=c("Observed", "Chao1", "ACE", "Shannon", "Simpson")) +
+    geom_boxplot() + 
+    theme_bw() +
+    labs(x='', color = "Population")
+
+```
+
+### Add diversity data to metadata
+
+```{r, alpha_div_meta}
+library(stats)
+
+# Create Diversity metrics
+diversity <- estimate_richness(ps_scaffolds_filtered)
+diversity_3 <- estimate_richness(ps_scaffolds_filtered3)
+
+metadata_col = colnames(sample_data(ps_scaffolds_filtered))
+print(metadata_col)
+
+# Combine data and metadata
+diversity_data <- data.frame(sample_data(ps_scaffolds_filtered), diversity)
+print(diversity_data)
+
+# Long format: Merge OTU/ASV data with sample metadata
+# merged_data <- cbind(metadata, t(otu_table(physeq_scaffolds)))
+
+```
+
+Show all possible diversity plots.
+
+```{r, warning=FALSE, message=FALSE, alpha_div_all}
+
+
+for (param in metadata_col){
+  for (param2 in metadata_col){
+    if (param == "norm_factor" || param == "Sample" || param == "Date"){
+    next
+    }
+    # combine title name
+    title <- paste(param, param2, sep = "_and_")
+    print(plot_richness(ps_scaffolds_filtered, x = param, color = param2, measures = c("Shannon", "Simpson")) + geom_boxplot()+ ggtitle(title)) 
+  }
+}
+
+
+```
+
+## Beta diversity
+
+### Visualize the dissimilarity matrix
+
+```{r, umap}
+
+
+# Debug and analysis function with transposition
+analyze_umap_data <- function(ps_scaffolds_CSS) {
+  # Extract and prepare abundance data
+  cat("Starting data preparation...\n")
+  
+  # Extract abundance matrix and transpose it
+  abund_mat <- t(as.matrix(otu_table(ps_scaffolds_CSS)))
+  cat("\nTransposed abundance matrix dimensions:", dim(abund_mat), "\n")
+  
+  # Extract metadata
+  meta <- data.frame(sample_data(ps_scaffolds_CSS))
+  cat("\nMetadata dimensions:", dim(meta), "\n")
+  
+  # Scale the transposed data
+  scaled_data <- scale(abund_mat)
+  
+  # Run UMAP
+  set.seed(123)
+  custom_config <- umap::umap.defaults
+  custom_config$n_neighbors <- 15
+  custom_config$min_dist <- 0.1
+  
+  umap_result <- umap::umap(scaled_data, config = custom_config)
+  
+  # Create results dataframe
+  umap_df <- data.frame(
+    UMAP1 = umap_result$layout[,1],
+    UMAP2 = umap_result$layout[,2]
+  )
+  
+  # Add sample names
+  rownames(umap_df) <- rownames(abund_mat)
+  umap_df$Sample <- rownames(umap_df)
+  
+  # Print debug info
+  cat("\nSample names in UMAP results:", head(rownames(umap_df)), "\n")
+  cat("Sample names in metadata:", head(rownames(meta)), "\n")
+  
+  # Merge with metadata
+  final_df <- merge(umap_df, meta, by.x = "Sample", by.y = "row.names", all.x = TRUE)
+  cat("\nFinal dataframe dimensions:", dim(final_df), "\n")
+  
+  # Create plot
+  p <- ggplot(final_df, aes(x = UMAP1, y = UMAP2)) +
+    geom_point(aes(color = City), size = 3, alpha = 0.7) +
+    stat_ellipse(aes(color = City), type = "t", linetype = 2) +
+    theme_bw() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 12, face = "bold"),
+      axis.text = element_text(size = 10),
+      legend.title = element_text(size = 12, face = "bold"),
+      legend.text = element_text(size = 10),
+      legend.position = "right",
+      panel.grid.minor = element_blank()
+    ) +
+    labs(
+      title = "UMAP of ARG Profiles by City",
+      x = "UMAP1",
+      y = "UMAP2"
+    ) +
+    scale_color_brewer(palette = "Set3") 
+  
+  return(list(
+    plot = p,
+    data = final_df,
+    debug_info = list(
+      original_dims = dim(abund_mat),
+      meta_dims = dim(meta),
+      final_dims = dim(final_df),
+      samples_per_city = table(final_df$City)
+    )
+  ))
+}
+
+
+# Debug and analysis function with transposition
+analyze_umap_gene_data <- function(ps_scaffolds_CSS) {
+  # Extract and prepare abundance data
+  cat("Starting data preparation...\n")
+  
+  # Extract abundance matrix and transpose it
+  abund_mat <- as.matrix(otu_table(ps_scaffolds_CSS))
+  cat("\nTransposed abundance matrix dimensions:", dim(abund_mat), "\n")
+  
+  # Extract metadata
+  meta <- data.frame(sample_data(ps_scaffolds_CSS))
+  cat("\nMetadata dimensions:", dim(meta), "\n")
+  
+  # Scale the transposed data
+  scaled_data <- scale(abund_mat)
+  
+  # Run UMAP
+  set.seed(123)
+  custom_config <- umap::umap.defaults
+  custom_config$n_neighbors <- 15
+  custom_config$min_dist <- 0.1
+  
+  umap_result <- umap::umap(scaled_data, config = custom_config)
+  
+  # Create results dataframe
+  umap_df <- data.frame(
+    UMAP1 = umap_result$layout[,1],
+    UMAP2 = umap_result$layout[,2]
+  )
+  
+  # Add sample names
+  rownames(umap_df) <- rownames(abund_mat)
+  umap_df$Sample <- rownames(umap_df)
+  
+  # Print debug info
+  cat("\nSample names in UMAP results:", head(rownames(umap_df)), "\n")
+  cat("Sample names in metadata:", head(rownames(meta)), "\n")
+  
+  # Merge with metadata
+  final_df <- merge(umap_df, meta, by.x = "Sample", by.y = "row.names", all.x = TRUE)
+  cat("\nFinal dataframe dimensions:", dim(final_df), "\n")
+  
+  # Create plot
+  p <- ggplot(final_df, aes(x = UMAP1, y = UMAP2)) +
+    geom_point(aes(color = City), size = 3, alpha = 0.7) +  # Change City to Sample
+    theme_bw() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 12, face = "bold"),
+      axis.text = element_text(size = 10),
+      legend.title = element_text(size = 12, face = "bold"),
+      legend.text = element_text(size = 10),
+      legend.position = "right",
+      panel.grid.minor = element_blank()
+    ) +
+    labs(
+      title = "UMAP of ARG Genes",  # Change title
+      x = "UMAP1",
+      y = "UMAP2"
+    )
+  
+  return(list(
+    plot = p,
+    data = final_df,
+    debug_info = list(
+      original_dims = dim(abund_mat),
+      meta_dims = dim(meta),
+      final_dims = dim(final_df),
+      samples_per_city = table(final_df$City)
+    )
+  ))
+}
+
+# Run the analysis
+results <- analyze_umap_data(ps_scaffolds_CSS)
+
+# Print debug information
+print("Debug Information:")
+print(results$debug_info)
+
+# Display plot
+print(results$plot)
+
+# Save plot
+ggsave("umap_city_fixed.svg", results$plot, width = 12, height = 8)
+
+# Print first few rows of the final data
+print("First few rows of final data:")
+print(head(results$data))
+
+# Print summary of City distribution
+print("Samples per city:")
+print(table(results$data$City))
+
+# Quick metadata check
+print(table(sample_data(ps_scaffolds_CSS)$City, useNA = "always"))
+print(head(sample_data(ps_scaffolds_CSS)))
+
+
+results_gene <- analyze_umap_gene_data(ps_scaffolds_CSS)
+
+print("Debug Information:")
+print(results_gene$debug_info)
+
+# Display plot
+print(results_gene$plot)
+
+
+
+```
+
+### NMDS
+
+
+```{r, NMDS_all}
+# Generating the methods list and discarding those that are not included in adonis methods list
+dist_methods = unlist(distanceMethodList)
+dist_methods = dist_methods[c(-(1:4),-(20:47))]
+
+# Iterating through the list to save the plot
+plist = vector("list", length(dist_methods))
+names(plist) = dist_methods
+for( i in dist_methods ){
+    # Calculate distance matrix
+    iDist = phyloseq::distance(ps_CSS, method=i)
+    # Calculate ordination
+    iMDS  = ordinate(ps_CSS, "NMDS", distance=iDist)
+    ## Make plot
+    # Don't carry over previous plot (if error, p will be blank)
+    p = NULL
+    # Create plot, store as temp variable, p
+    p = plot_ordination(ps_CSS, iMDS, color="City")
+    # Add title to each plot
+    p = p + ggtitle(paste("NMDS using distance method ", i, sep=""))
+    # Save the graphic to file.
+    plist[[i]] = p
+}
+
+# Create a combined plot
+df = ldply(plist, function(x) x$data)
+names(df)[1] = "distance"
+p = ggplot(df, aes(NMDS1, NMDS2, color=City))
+p = p + geom_point(size=3, alpha=0.5)
+p = p + facet_wrap(~distance, scales="free")
+p = p + ggtitle("NMDS on various distance metrics for Latvian WW dataset") + 
+    theme_bw() + 
+    labs(color = "City")+
+    geom_polygon(aes(fill=City), alpha = 1/2) 
+
+options(repr.plot.width=12, repr.plot.height=10)
+p
+```
+
+#### MDS
+
+```{r, mds_plot}
+color_palette <- c(brewer.pal(8, "Dark2"), brewer.pal(7, "Set2"))
+
+ps_scaffolds_CSS%>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ dist_calc(dist = "euclidean") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Regional_Hospital", fill = "Regional_Hospital",
+  shape = "circle", alpha = 1,
+  size = 5
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Regional_Hospital)
+ )+
+  scale_fill_manual(values = color_palette) +
+  scale_color_manual(values = color_palette) +
+  theme(
+    legend.text = element_text(size = 18),
+    legend.title = element_text(size = 22)
+)
+
+ps_scaffolds_CSS3%>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ dist_calc(dist = "euclidean") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Regional_Hospital", fill = "Regional_Hospital",
+  shape = "circle", alpha = 1,
+  size = 5
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Regional_Hospital)
+ )+
+  scale_fill_manual(values = color_palette) +
+  scale_color_manual(values = color_palette) +
+  theme(
+    legend.text = element_text(size = 18),
+    legend.title = element_text(size = 22)
+)
+
+color_palette <- c(brewer.pal(8, "Dark2"), brewer.pal(7, "Set2"))
+
+ps_scaffolds_CSS%>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ dist_calc(dist = "euclidean") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Hospital_Type", fill = "Hospital_Type",
+  shape = "circle", alpha = 1,
+  size = 5
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Hospital_Type)
+ )+
+  scale_fill_manual(values = color_palette) +
+  scale_color_manual(values = color_palette) +
+  theme(
+    legend.text = element_text(size = 18),
+    legend.title = element_text(size = 22)
+)
+
+```
+
+```{r, mds_color}
+ps_scaffolds_filtered %>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Regional_Hospital", fill = "Regional_Hospital",
+  shape = "circle", alpha = 0.5,
+  size = 2
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Regional_Hospital)
+ )
+
+
+
+ps_scaffolds_filtered %>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Hospital_Type", fill = "Hospital_Type",
+  shape = "circle", alpha = 0.5,
+  size = 2
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Hospital_Type)
+ )
+
+
+
+ps_scaffolds_filtered %>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Population", fill = "Population",
+  shape = "circle", alpha = 0.5,
+  size = 2
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Population)
+ )
+
+
+ps_scaffolds_filtered %>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Industrial_wastewater_impact", fill = "Industrial_wastewater_impact",
+  shape = "circle", alpha = 0.5,
+  size = 2
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Industrial_wastewater_impact)
+ )
+
+
+
+
+ps_scaffolds_filtered %>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Industrial_wastewater_impact_from_food", fill = "Industrial_wastewater_impact_from_food",
+  shape = "circle", alpha = 0.5,
+  size = 2
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Industrial_wastewater_impact_from_food)
+ )
+
+ps_scaffolds_filtered %>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Dairy_farming", fill = "Dairy_farming",
+  shape = "circle", alpha = 0.5,
+  size = 2
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Dairy_farming)
+ )
+
+
+
+ps_scaffolds_filtered %>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Meat_production", fill = "Meat_production",
+  shape = "circle", alpha = 0.5,
+  size = 2
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Meat_production)
+ )
+
+ps_scaffolds_filtered %>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Metal_processing", fill = "Metal_processing",
+  shape = "circle", alpha = 0.5,
+  size = 2
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Metal_processing)
+ )
+
+
+
+ps_scaffolds_filtered %>%
+ tax_transform(rank = "ARG", trans = "clr") %>%
+ ord_calc(
+  method = "auto"
+ ) %>% 
+ ord_plot(
+  axes = c(1, 2),
+  colour = "Washrooms", fill = "Washrooms",
+  shape = "circle", alpha = 0.5,
+  size = 2
+ ) +
+ stat_chull(
+  ggplot2::aes(colour = Washrooms)
+ )
+
+
+
+
+```
+
+```{r, pco_plot}
+
+library(ggplot2)
+library(phyloseq)
+library(vegan) # For PCoA and distance calculations
+library(ggrepel) # For better text labels
+
+# Assuming physeq_contigs is your phyloseq object
+distances <- phyloseq::distance(ps_scaffolds_CSS, method = "bray")
+pcoa_res <- ape::pcoa(distances)
+pcoa_df <- as.data.frame(pcoa_res$vectors)
+
+# Create a dataframe for plotting
+plot_df <- data.frame(
+  Sample = rownames(pcoa_df),
+  PCoA1 = pcoa_df[,1],
+  PCoA2 = pcoa_df[,2],
+  City = sample_data(ps_scaffolds_CSS)$City,
+  Hospitals = sample_data(ps_scaffolds_CSS)$Regional_Hospital,
+  Population = sample_data(ps_scaffolds_CSS)$Population
+)
+
+color_palette <- scales::hue_pal()(15)
+color_palette <- c(brewer.pal(8, "Dark2"), brewer.pal(7, "Set2"))
+
+# Create the plot
+ggplot(plot_df, aes(x = PCoA1, y = PCoA2, color = City)) +
+  geom_point(aes(shape = City), size = 3, alpha = 0.7) +
+  stat_ellipse(aes(fill = City), geom = "polygon", alpha = 0.2) +
+  geom_text_repel(aes(label = City), size = 4, max.overlaps = 10) +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  labs(title = "Beta Diversity (PCoA)", x = "PCoA Axis 1", y = "PCoA Axis 2")+
+  scale_fill_manual(values = color_palette) +
+  scale_color_manual(values = color_palette) +
+  theme(
+    legend.text = element_text(size = 18),
+    legend.title = element_text(size = 22)
+)
+
+
+ggplot(plot_df, aes(x = PCoA1, y = PCoA2, color = Hospitals)) +
+  geom_point(aes(shape = Hospitals), size = 3, alpha = 0.7) +
+  stat_ellipse(aes(fill = Hospitals), geom = "polygon", alpha = 0.2) +
+  geom_text_repel(aes(label = Hospitals), size = 4, max.overlaps = 10) +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  labs(title = "Beta Diversity (PCoA) Hospitals", x = "PCoA Axis 1", y = "PCoA Axis 2")+
+  scale_fill_manual(values = color_palette) +
+  scale_color_manual(values = color_palette) +
+  theme(
+    legend.text = element_text(size = 18),
+    legend.title = element_text(size = 22)
+)
+
+
+ggplot(plot_df, aes(x = PCoA1, y = PCoA2, color = Population)) +
+  geom_point(aes(shape = Population), size = 3, alpha = 0.7) +
+  stat_ellipse(aes(fill = Population), geom = "polygon", alpha = 0.2) +
+  geom_text_repel(aes(label = Population), size = 4, max.overlaps = 10) +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  labs(title = "Beta Diversity (PCoA) Population", x = "PCoA Axis 1", y = "PCoA Axis 2")+
+  scale_fill_manual(values = color_palette) +
+  scale_color_manual(values = color_palette) +
+  theme(
+    legend.text = element_text(size = 18),
+    legend.title = element_text(size = 22)
+)
+
+
+```
+#### NMDS bray
+
+```{r, OTU}
+
+GP1 <- ps_scaffolds_CSS
+
+# Just OTUs
+GP.ord <- ordinate(GP1, "NMDS", "bray") 
+
+p1 = plot_ordination(GP1, GP.ord, type="taxa", color="ARG", title="taxa")
+print(p1)
+
+p1 + facet_wrap(~ARG, 3)
+
+# Biplot graphic
+p3 = plot_ordination(GP1, GP.ord, type="biplot", color="Regional_Hospital", title="biplot")
+p3
+
+# Split graphic
+p4 = plot_ordination(GP1, GP.ord, type="split", color="City", shape="City", label="City", title="split") 
+p4
+
+gg_color_hue <- function(n){
+  hues = seq(15, 375, length=n+1)
+  hcl(h=hues, l=65, c=100)[1:n]
+}
+color.names <- levels(p4$data$Phylum)
+p4cols <- gg_color_hue(length(color.names))
+names(p4cols) <- color.names
+p4cols["samples"] <- "black"
+p4 + scale_color_manual(values=p4cols)
+
+
+```
+
+```{r, NMDS_B}
+p = plot_ordination(ps_scaffolds_CSS, GP.ord , color="Population")
+p = p + geom_point(size=4, alpha=0.75)
+p + ggtitle("NMDS bray")
+
+```
+
+#### PCoA
+
+```{r, PCoA_arg_profile}
+
+ps_scaffolds_filtered %>%
+  tax_transform("identity", rank = "ARG") %>%
+  dist_calc(dist = "bray", binary = TRUE) %>%
+  ord_calc("PCoA") %>%
+  ord_plot(
+    color = "Regional_Hospital", 
+    shape = "Hospital_Type", 
+    size = 2,
+    alpha = 0.8
+  ) +
+  scale_shape_manual(values = c(16, 17, 18, 15, 19, 25, 8, 13)) + # Manual shapes for all hospital types
+  stat_ellipse(aes(linetype = Regional_Hospital, colour = Regional_Hospital)) +
+  theme_bw() +
+  ggside::geom_xsideboxplot(aes(fill = Regional_Hospital, y = Regional_Hospital), 
+                           orientation = "y",
+                           na.rm = TRUE) +
+  ggside::geom_ysidedensity(aes(fill = Regional_Hospital), 
+                           alpha = 0.5, 
+                           show.legend = FALSE,
+                           na.rm = TRUE) +
+  ggside::theme_ggside_void() +
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  labs(
+    title = "PCoA of ARG Profiles",
+    x = "PCoA1",
+    y = "PCoA2"
+  )
+
+
+                      
+                      
+```                      
+
+```{r, PCoA_arg_profile_population}
+
+ps_scaffolds_filtered %>%
+  tax_transform("identity", rank = "ARG") %>%
+  dist_calc(dist = "bray", binary = TRUE) %>%
+  ord_calc("auto") %>%
+  ord_plot(
+    color = "Population", 
+    shape = "City", 
+    size = 2,
+    alpha = 0.8
+  ) +
+  scale_shape_manual(values = c(16, 17, 18, 15, 19, 25, 8, 13, 1, 2, 3, 4, 5, 6, 7)) + # Manual shapes for all hospital types
+  stat_ellipse(aes(linetype = Population, colour = Population)) +
+  theme_bw() +
+  ggside::geom_ysideboxplot(aes(fill = Population, x = Population), 
+                           orientation = "x",
+                           na.rm = TRUE) +
+  ggside::theme_ggside_void() +
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  labs(
+    title = "PCoA of ARG Profiles",
+    x = "PCoA1",
+    y = "PCoA2"
+  )
+
+                      
+                      
+```    
+                      
+## Statistical test
+
+(P value < 0.05, there are significant difference between groups).
+
+### Calculate distance Matrices
+
+```{r, dist}
+arg_bray <- phyloseq::distance(ps_scaffolds_CSS, method = "bray")
+arg_bray3 <- phyloseq::distance(ps_scaffolds_CSS3, method = "bray")
+arg_bray3.1 <- phyloseq::distance(ps_scaffolds_CSS3, method = "mountford")
+arg_bray_drug <- phyloseq::distance(ps_drugs_CSS, method = "bray")
+
+otu_matrix <- as.matrix(t(otu_table(ps_scaffolds_CSS)))
+# For Euclidean distance:
+dist_matrix_euclidean <- vegdist(otu_matrix, method = "euclidean")
+# Jaccard
+dist_matrix_jaccard <- vegdist(otu_matrix, method = "jaccard")
+
+```
+
+### PERMANOVA 
+
+Testing the hypothesis that the Cities we collected samples from have different centroids
+
+```{r, PERMANOVA}
+
+# Microbial Community Diversity Analysis Tutorial with Phyloseq
+# Permanova
+# https://deneflab.github.io/MicrobeMiseq/demos/mothur_2_phyloseq.html
+
+# make a data frame from the sample_data
+sampledf <- data.frame(sample_data(ps_scaffolds_CSS))
+
+# PERMANOVA test
+
+for (param in metadata_col){
+# Using Bray-Curtis distance by default
+if (param == "norm_factor" || param == "Sample" || param == "Date"){
+    next
+}
+
+print(param)
+formula_str <- paste("arg_bray ~", param)  
+adonis2_rez<-adonis2(as.formula(formula_str), data = sampledf)
+
+# View results
+print(adonis2_rez)
+plot(adonis2_rez)
+}
+
+```
+
+### ANOSIM
+
+Analysis of similarities.
+Determine whether there are statistically significant differences between two or more groups.  ANOSIM is a non-parametric technique based on ranks.
+
+If the grouping variable is important, then on average the rank distance within groups will be smaller than the rank distance between sample units from different groups
+
+```{r, ANOSIM}
+
+for (param in metadata_col){
+  # Using Bray-Curtis distance by default
+  if (param == "norm_factor" || param == "Sample" || param == "Date" || param == "norm_factor"){
+      next
+  }
+    
+  print(param)
+  
+  set.seed(123)
+  anosim_result <- anosim(arg_bray, metadata[[param]], permutations = 9999, parallel = 5)
+  
+  # View results
+  print(anosim_result)
+  plot(anosim_result)
+}
+
+```
+
+### Group dispersions test: BETADISPER
+
+(P value < 0.05, there are significant differences in multivariate dispersion among
+groups)
+
+
+```{r, warning=FALSE,BETADISP_ANOVA}
+
+for (param in metadata_col){
+
+beta <- betadisper(arg_bray, sampledf[[param]])
+print("BETADISPER")
+print(param)
+print(anova(beta))
+
+boxplot(beta, main = param)
+options(repr.plot.width=10, repr.plot.height=10)
+plot(beta, main = param)
+
+}
+
+```
+
+
+
+### Tukey Honest Significant Differences
+
+**There is significant effect of the sampling site: Pr(\>F) = 0.00731 (P-value \< 0.05)**
+
+Tukey Honest Significant Difference test to test differences among the sampling locations.
+
+```{r, Tukey}
+library("agricolae")
+hsd_test <- TukeyHSD(aov_test) # require the agricolae package  
+hsd_res <- HSD.test(aov_test, "City", group=T)$groups  
+hsd_res  
+```
+
+
+### Kruskal-Wallis test One way Anova
+
+City
+
+```{r, kruskalWallis}
+kruskal.test(Shannon~City ,data = diversity_data)
+kruskal.test(Shannon~Population ,data = diversity_data)
+kruskal.test(Simpson~Population ,data = diversity_data)
+kruskal.test(Chao1~Population ,data = diversity_data)
+```
+
+Hospital
+
+```{r}
+kruskal.test(Shannon~Regional_Hospital ,data = diversity_data)
+kruskal.test(Shannon~Hospital_Type ,data = diversity_data)
+```
+
+
+
+Industries
+
+```{r, kruskal}
+
+kruskal.test(Shannon~Meat_production ,data = diversity_data)
+kruskal.test(Shannon~Metal_processing ,data = diversity_data)
+kruskal.test(Shannon~Washrooms ,data = diversity_data)
+
+kruskal.test(Shannon~Industrial_wastewater_impact ,data = diversity_data)
+kruskal.test(Shannon~Industrial_wastewater_impact_from_food ,data = diversity_data)
+kruskal.test(Shannon~Dairy_farming ,data = diversity_data)
+
+```
+
+## Create a pairwise tests
+
+
+### Pairwise ANOSIM
+
+
+```{r}
+cbn <- combn(x = unique(metadata$City), m = 2)
+p <- c()  # vector to store p values
+R <- c()  # vector to store R values
+
+for (i in 1:ncol(cbn)) {
+    ps.subs <- subset_samples(ps_scaffolds_CSS, City %in% cbn[, i])
+    metadata_sub <- data.frame(sample_data(ps.subs))
+    permanova_pairwise <- anosim(phyloseq::distance(ps.subs, method="bray"), 
+                                 metadata_sub$City)
+    p <- c(p, permanova_pairwise$signif[1])  # Store p-values
+    R <- c(R, permanova_pairwise$statistic)  # Store R statistics
+}
+
+p.adj <- p.adjust(p, method = "BH")  # Adjust p-values
+p.table <- cbind.data.frame(t(cbn), R = R, p = p, p.adj = p.adj)  # Combine all results in a table
+
+#write.table(p.table, "~/ARG_waste_water/results/pairwise_anosim_arg.tsv", row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+```
+
+*Criteria for R-value color codes:*
+
+R-value Near 0:
+R ~ 0.0 to 0.2: This range typically suggests that there is little to no observable difference between the groups. The samples can be considered very similar in composition.
+
+Moderate R-values:
+R ~ 0.2 to 0.5: This range suggests moderate differentiation. Samples might be considered somewhat different, but the distinction isn't very strong. Interpretation in this range can depend on the sensitivity required in the study and the natural variability of the dataset.
+High R-values:
+
+R-value close to 1:
+R > 0.5: This range indicates strong differentiation between samples. The higher the R-value, especially approaching or exceeding 0.7, the more distinct the community compositions between the groups. Samples with these R-values can be considered to have different compositions.
+
+
+```{r}
+library(pheatmap)
+data <- read.table("~/ARG_waste_water/results/pairwise_anosim_arg.tsv", header = TRUE, sep = "\t")
+# Building a matrix
+samples <- unique(c(data$X1, data$X2))
+r_matrix <- matrix(NA, nrow = length(samples), ncol = length(samples), 
+                   dimnames = list(samples, samples))
+for (i in 1:nrow(data)) {
+    row <- which(samples == data$X1[i])
+    col <- which(samples == data$X2[i])
+    r_matrix[row, col] <- data$R[i]
+    r_matrix[col, row] <- data$R[i]  # Ensure the matrix is symmetric
+}
+
+desired_order <- c("Cesis","Dobele","Jelgava","Jurmala","Kuldiga","Liepāja","Madona","Salaspils","Saldus","Sigulda","Smiltene","Talsi","Tukums","Valmiera","Ventspils")
+r_matrix <- r_matrix[desired_order, desired_order]
+
+# Set the lower triangle to NA
+r_matrix[lower.tri(r_matrix)] <- NA
+
+# Define the colors and breaks
+colors <- c(
+  colorRampPalette(c("#a80202", "#ff6403"))(20),    # Gradient from 0 to 0.2
+  colorRampPalette(c("#ff6403", "#ffda05"))(30),    # Sharp change from 0.2 to 0.5
+  colorRampPalette(c("#ffda05", "black"))(50)       # Sharp change from 0.5 to 1.0
+)
+breaks <- c(
+  seq(0, 0.2, length.out = 21),     # Breaks from 0 to 0.2
+  seq(0.2, 0.5, length.out = 31)[-1],   # Breaks from 0.2 to 0.5 (excluding duplicate 0.2)
+  seq(0.5, 1.0, length.out = 51)[-1]    # Breaks from 0.5 to 1.0 (excluding duplicate 0.5)
+)
+
+# Plot the heatmap
+pdf("rvalues_hp.pdf", width = 7, height = 5)
+pheatmap(r_matrix,
+         color = colors,
+         breaks = breaks,
+         cluster_rows = FALSE,  # Disable clustering to preserve the order
+         cluster_cols = FALSE,  # Disable clustering to preserve the order
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         display_numbers = FALSE,
+         na_col = "white")  # Set the color for NA values
+dev.off()
+
+```
+
+
+
+### Wilconx rank sum test
+
+```{r}
+pairwise.wilcox.test(diversity_data$Shannon,
+                     diversity_data$City,
+                     p.adjust.method = "BH")
+```
+
+```{r}
+pairwise.wilcox.test(diversity_data$Shannon,
+                     diversity_data$Regional_Hospital,
+                     p.adjust.method = "BH")
+
+```
+
+```{r}
+wilcox.test(diversity_data$Shannon, alternative = "two.sided", 
+            paired = FALSE, 
+            conf.int = TRUE)
+
+pairwise.wilcox.test(diversity_data$Shannon,
+                     diversity_data$Hospital_Type,
+                     p.adjust.method = "BH")
+
+```
+
+
+### Dunes
+
+```{r}
+dunn.test(diversity_data$Shannon, 
+          sample_data(ps_scaffolds_filtered)$City, 
+          method="bh")
+```
+
+```{r}
+dunn.test(diversity_data$Shannon, 
+          sample_data(ps_scaffolds_filtered)$Population, 
+          method="bh")
+```
+
+```{r}
+dunn.test(diversity_data$Shannon, 
+          sample_data(ps_scaffolds_filtered)$Hospital_Type, 
+          method="bh")
+```
+
+```{r}
+dunn.test(diversity_data$Shannon, 
+          sample_data(ps_scaffolds_filtered)$Regional_Hospital, 
+          method="bh")
+```
+
+### AOV - analysis of Variance Model
+
+```{r, aov}
+summary(aov(Shannon~City, data = diversity_data))
+```
+
+
+### Confounding variables
+
+Multivariate Analysis
+
+```{r, mulrivariat}
+
+```
+
+## Differential abundance analysis
+
+### Limma
+
+```{r, llima}
+
+
+
+```
+
+
+### DESEQ2
+
+```{r, diffabund}
+
+for (param in metadata_col){
+  
+  # skip
+  if (param == "norm_factor" || param == "Sample" || param == "Date"){
+    next
+  }
+  
+  print(param) 
+  
+  # Differential abundance analysis
+  print(run_deseq2(ps_scaffolds_CSS, param))
+
+}
+
+```
+
+
+```{r, aldex2}
+# Modified ALDEx2 analysis for multiple groups
+run_aldex2_pairwise <- function(ps_object, variable) {
+    # Get all levels
+    metadata <- sample_data(ps_object)
+    levels <- unique(metadata[[variable]])
+    
+    # Store results
+    results <- list()
+    
+    # Perform pairwise comparisons
+    for(i in 1:(length(levels)-1)) {
+        for(j in (i+1):length(levels)) {
+            # Subset data for just these two levels
+            ps_subset <- prune_samples(metadata[[variable]] %in% c(levels[i], levels[j]), ps_object)
+            
+            # Get OTU table and metadata
+            otu_table <- as.matrix(otu_table(ps_subset))
+            meta <- sample_data(ps_subset)[[variable]]
+            
+            # Run ALDEx2
+            tryCatch({
+                aldex_clr <- aldex.clr(otu_table, meta, mc.samples=128)
+                aldex_effect <- aldex.effect(aldex_clr)
+                aldex_test <- aldex.ttest(aldex_clr)
+                
+                # Store results
+                comparison_name <- paste(levels[i], "vs", levels[j])
+                results[[comparison_name]] <- list(
+                    effect = aldex_effect,
+                    test = aldex_test
+                )
+            }, error = function(e) {
+                message(sprintf("Error in comparison %s vs %s: %s", levels[i], levels[j], e$message))
+            })
+        }
+    }
+    
+    # Summarize significant differences
+    significant_results <- lapply(names(results), function(comparison) {
+        test_results <- results[[comparison]]$test
+        effect_results <- results[[comparison]]$effect
+        
+        # Combine test and effect results
+        sig_features <- which(test_results$we.eBH < 0.05)
+        
+        if(length(sig_features) > 0) {
+            data.frame(
+                Comparison = comparison,
+                Feature = rownames(test_results)[sig_features],
+                Effect = effect_results$effect[sig_features],
+                P_value = test_results$we.ep[sig_features],
+                Q_value = test_results$we.eBH[sig_features]
+            )
+        } else {
+            NULL
+        }
+    })
+    
+    # Remove NULL results and combine
+    significant_results <- do.call(rbind, significant_results[!sapply(significant_results, is.null)])
+    
+    return(list(
+        full_results = results,
+        significant = significant_results
+    ))
+}
+
+# Run the analysis
+aldex_results <- run_aldex2_pairwise(ps_scaffolds_CSS, "City")
+
+# View significant results
+print("Significant differentially abundant features:")
+print(aldex_results$significant)
+
+# Create visualization of significant results
+if(!is.null(aldex_results$significant)) {
+    ggplot(aldex_results$significant, 
+           aes(x = Effect, y = -log10(Q_value), label = Feature)) +
+        geom_point() +
+        geom_text_repel(max.overlaps = 20) +
+        facet_wrap(~Comparison) +
+        theme_bw() +
+        labs(title = "Significant differences between cities",
+             x = "Effect size",
+             y = "-log10(Q-value)")
+}
+```
+
+
+## Finding biomarkers
+
+## Co-occurance
+
+Calculate co-occurrence using Spearman correlation:
+
+```{r}
+ library(cooccur)
+
+cooccur.arg <- cooccur(otu_table(ps_scaffolds_filtered),
+                           type = "spp_site",
+                           thresh = TRUE,
+                           spp_names = TRUE)
+
+summary(cooccur.arg)
+```
+
+```{r, plot_coc}
+prob.table(cooccur.arg)
+plot(cooccur.arg)
+```
+
+
+Calculate co-occurrence using Spearman correlation:
+```{r}
+plot_net(ps_scaffolds_CSS, color = "City", shape = "Population")
+```
+
+```{r}
+ig <- make_network(ps_scaffolds_filtered, dist.fun="bray", max.dist=0.4)
+phyloseq::plot_network(ig, ps_scaffolds_filtered, color="Regional_Hospital", label = "City")
+```
+
+
+
+
+### ANCOMBC
+
+```{r}
+library(ANCOMBC)
+meta_data = microbiome::meta(ps_scaffolds_filtered)
+
+pseq_perm = ps_scaffolds_filtered
+meta_data_perm = microbiome::meta(pseq_perm)
+meta_data_perm$bmi = sample(meta_data_perm$bmi)
+
+phyloseq::sample_data(pseq_perm) = meta_data_perm
+
+# output = ancombc2(data = ps_scaffolds_filtered, tax_level = "ARG",
+#                   fix_formula = "Regional_Hospital", rand_formula = NULL,
+#                   p_adj_method = "holm", pseudo_sens = TRUE,
+#                   prv_cut = 0, lib_cut = 1000, s0_perc = 0.05,
+#                   group = "Regional_Hospital", struc_zero = TRUE, neg_lb = TRUE)
+
+
+```
+
+### Spearmans_corelation
+
+```{r, Spearmans}
+calculate_cooccurrence <- function(ps_object, threshold = 0.6) {
+  otu_table <- as.data.frame(otu_table(ps_object))
+  cor_matrix <- cor(t(otu_table), method = "spearman")
+  cor_matrix[abs(cor_matrix) < threshold] <- 0
+  
+  # Ensure symmetry
+  cor_matrix[upper.tri(cor_matrix)] <- t(cor_matrix)[upper.tri(cor_matrix)]
+  
+  return(cor_matrix)
+}
+
+gene_cooccurrence <- calculate_cooccurrence(ps_scaffolds_filtered)
+#bacteria_cooccurrence <- calculate_cooccurrence(ps_bacteria)
+```
+
+Create network graphs:
+
+```{r, graph}
+library(igraph)
+
+
+cor_matrix = gene_cooccurrence
+
+directed = FALSE
+layout = "fruchterman_reingold"
+
+if (directed) {
+  graph <- graph_from_adjacency_matrix(cor_matrix, mode = "directed", weighted = TRUE, diag = FALSE)
+} else {
+  # For undirected graphs, we need to make sure we only keep the upper triangle
+  cor_matrix[lower.tri(cor_matrix)] <- 0
+  graph <- graph_from_adjacency_matrix(cor_matrix, mode = "undirected", weighted = TRUE, diag = FALSE)
+}
+
+E(graph)$width <- abs(E(graph)$weight) * 2
+V(graph)$size <- degree(graph) * 2
+
+set.seed(123)  # For reproducibility
+layout <- layout_nicely(graph)
+
+
+
+gene_network <- list(graph = graph, layout = layout)
+
+tkplot(graph)
+```
+
+Plot the networks:
+
+```{r, netw}
+plot_network <- function(network, title) {
+  plot(network$graph, 
+       layout = network$layout,
+       vertex.label.cex = 0.6,
+       vertex.label.color = "black",
+       vertex.color = colorRampPalette(brewer.pal(9, "Set1"))(vcount(network$graph)),
+       edge.color = ifelse(E(network$graph)$weight > 0, "blue", "red"),
+       main = title)
+}
+
+par(mfrow = c(1, 2))
+
+plot_network(list(graph = graph, layout = layout), "Antibiotic Resistance Gene Co-occurrence")
+```
+
+Analyze co-occurrence patterns based on metadata:
+
+```{r, analyze_cooc}
+analyze_cooccurrence <- function(ps_object, metadata_variable) {
+  metadata <- sample_data(ps_object)
+  groups <- unique(metadata[[metadata_variable]])
+  
+  result_list <- list()
+  
+  for (group in groups) {
+    subset_samples <- subset_samples(ps_object, get(metadata_variable) == group)
+    subset_cooccurrence <- calculate_cooccurrence(subset_samples)
+    result_list[[group]] <- create_network(subset_cooccurrence)
+  }
+  
+  return(result_list)
+}
+
+# Example: Analyze co
+analyze_cooccurrence(ps_scaffolds_filtered, "City")
+```
+
+```{r, SpiecEasi}
+library(SpiecEasi)
+
+# In practice, use more repetitions
+pargs <- list(rep.num=999, seed=10010, ncores=36)
+
+# uncomment to re-run. takes time. 
+# se.mb.amgut2 <- spiec.easi(gene_cooccurrence, method='mb', lambda.min.ratio=1e-2,
+#                            nlambda=20, pulsar.select=TRUE, pulsar.params=pargs)
+
+# save created plot to save time re-running
+saveRDS(se.mb.amgut2 , "~/ARG_waste_water/Resistance_genes/network_graph.rds")
+se.mb.amgut2 <- readRDS("~/ARG_waste_water/Resistance_genes/network_graph.rds")
+
+ig2.mb <- adj2igraph(getRefit(se.mb.amgut2),  vertex.attr=list(name=taxa_names(ps_scaffolds_filtered)))
+
+nw <- plot_network(ig2.mb, gene_cooccurrence, type='tax')
+
+plot(nw)
+
+
+#please use more numebr of rep.num (99 or 999) the paraemters 
+
+## Create graph object and get edge values  
+
+
+#n.c <- symBeta(getOptBeta(se.mb.amgut2))
+
+#otu.c <- t(otu_table(gene_cooccurrence)@.Data) #extract the otu table from phyloseq object
+
+#colnames(n.c) <- rownames(n.c) <- colnames(otu.c)
+
+#vsize <- log2(apply(otu.c, 2, mean)) 
+
+
+#colnames(n.c) <- rownames(n.c) <- colnames(otu.c)
+
+#vsize <- log2(apply(otu.c, 2, mean)) 
+
+```
+
+```{r, igraph}
+#ww.ig <- graph.adjacency(n.c, mode='undirected', add.rownames = TRUE, weighted = TRUE)
+#ww.ig # we can see all the attributes and weights
+
+#plot(ww.ig)
+
+```
+
+!!!! !!!!! to Continue: <https://mibwurrepo.github.io/Microbial-bioinformatics-introductory-course-Material-2018/inference-of-microbial-ecological-networks.html> !!!!
+
+
+## Read plasmid Data
+
+```{r}
+# Load required libraries for data manipulation and visualization
+# tidyverse includes ggplot2 for plotting and dplyr for data manipulation
+library(tidyverse)
+library(readr)
+
+# Read the TSV file
+# read_tsv is particularly good for TSV files as it automatically handles tab separation
+arg_data <- read_tsv("../Resistance_genes/hamronization_combined_report.tsv")
+
+# Process the data to count ARGs per plasmid
+# First, we'll extract the plasmid ID from the input_sequence_id column
+# Then, we'll count occurrences of each plasmid
+plasmid_counts <- arg_data %>%
+  # Extract plasmid ID before the | character
+  mutate(plasmid_id = sub("\\|.*$", "", input_sequence_id)) %>%
+  # Group by plasmid and count occurrences
+  group_by(plasmid_id) %>%
+  dplyr::summarise(arg_count = n()) %>%
+  # Sort in descending order
+  arrange(desc(arg_count)) %>%
+  # Take top 15 plasmids using slice_n instead of head()
+head(n = 45)
+
+# Create the visualization
+ggplot(plasmid_counts, aes(x = reorder(plasmid_id, -arg_count), y = arg_count)) +
+  # Add bars
+  geom_bar(stat = "identity", fill = "#4f46e5") +
+  # Add labels and title
+  labs(
+    title = "Distribution of Antimicrobial Resistance Genes Across Plasmids",
+    x = "Plasmid ID",
+    y = "Number of ARGs"
+  ) +
+  # Rotate x-axis labels for better readability
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  # Add count labels on top of bars
+  geom_text(aes(label = arg_count), vjust = -0.5) +
+  # Adjust y-axis to make room for labels
+  scale_y_continuous(limits = c(0, max(plasmid_counts$arg_count) + 1))
+
+# Save the plot if needed
+# Uncomment the following line to save the plot
+# ggsave("arg_distribution.png", width = 12, height = 8)
+```
+
+
+# Bacteria tax analysis
+
+
+
+```{r, imp_bact}
+# importē abundance table
+abund_table_tax = read.csv("~/ARG_waste_water/taxonomy_species.csv", row.names = 1)
+abund_table_tax = abund_table_tax[-which(colnames(abund_table_tax) %in% c("Total", "Relative.Frequency")), ]
+abund_table_tax[is.na(abund_table_tax)] <- 0
+```
+
+
+```{r, bact_phyloseq}
+
+OTU = otu_table(abund_table_tax, taxa_are_rows = TRUE)
+bact_metadata = metadata
+rownames(bact_metadata)<-bact_metadata$Sample
+SAM = sample_data(bact_metadata)
+
+# Create taxonomy table from the row names of the data
+tax_t <- data.frame(Tax = rownames(abund_table_tax), Bact = rownames(abund_table_tax))
+# tax_t <- sanitizeRowNames(tax_t)
+rownames(tax_t) <- tax_t$Tax
+
+TAX <- tryCatch({
+  tax_table(as.matrix(tax_t[, c('Tax', 'Bact')]))
+}, error = function(e) {
+  stop("Failed to create taxonomy table: ", e$message)
+})
+
+  
+ps_bact = merge_phyloseq(phyloseq(OTU),SAM, tax_t)
+ps_bact = phyloseq(otu_table(OTU, taxa_are_rows = TRUE), sample_data(SAM))
+```
+
+```{r, counts_bact}
+print("Total sequence count before filtering")
+sum(abund_table_tax)
+print("Tax before filtering")
+dim(abund_table_tax)
+```
+
+```{r, filter_bact}
+
+# Less strict filterring option
+# remove singletons. 
+
+ps_bact_filtered = filter_taxa(ps_bact, function(x) sum(x) > 1, TRUE)
+
+# Remove taxa not seen more than 3 times in at least 20% (9) of the samples. This protects against an OTU with small mean & trivially large C.V.
+ps_bact_filtered2 = filter_taxa(ps_bact, function(x) sum(x > 3) > (0.2*length(x)), TRUE)
+
+# Filter OTUs to include only those with at least 7 reads in 5% (2) of the samples
+ps_bact_filtered3 = filter_taxa(ps_bact, function(x) sum(x > 7) > (0.05 * length(x)), TRUE)
+
+
+max_difference = max(sample_sums(ps_scaffolds_filtered))/min(sample_sums(ps_scaffolds_filtered))
+sprintf("The max difference in sequencing depth is %s", max_difference)
+
+# Convert the filtered OTU table to a data frame
+data_otu_filt = data.frame(otu_table(ps_bact_filtered))
+data_otu_filt2 = data.frame(otu_table(ps_bact_filtered2))
+data_otu_filt3 = data.frame(otu_table(ps_bact_filtered3))
+
+# Print the dimensions of the filtered data
+print("Phyloseq ARG scaffolds after filtering")
+dim(data_otu_filt)
+dim(data_otu_filt2)
+dim(data_otu_filt3)
+
+# Print the total sequence count after filtering
+print("Filtered sequence count")
+sum(data_otu_filt)
+print("Filtered sequence count filt 2")
+sum(data_otu_filt2)
+
+print("Filtered sequence count filt 3")
+sum(data_otu_filt3)
+
+# Calculate and print the percentage of sequences dropped from the original dataset
+original_seq_count = sum(data.frame(otu_table(ps_bact)))
+filtered_seq_count = sum(data_otu_filt)
+seq_dropped_percentage = ((original_seq_count - filtered_seq_count) / original_seq_count) * 100
+
+filtered_seq_count = sum(data_otu_filt2)
+seq_dropped_percentage2 = ((original_seq_count - filtered_seq_count) / original_seq_count) * 100
+
+filtered_seq_count = sum(data_otu_filt3)
+seq_dropped_percentage3 = ((original_seq_count - filtered_seq_count) / original_seq_count) * 100
+
+
+print("Sequence % dropped from the dataset:")
+seq_dropped_percentage
+print("Sequence % dropped from the dataset 2:")
+seq_dropped_percentage2
+print("Sequence % dropped from the dataset 3:")
+seq_dropped_percentage3
+
+
+options(repr.plot.width=4, repr.plot.height=5)
+
+boxplot(sample_sums(ps_bact), main="Sequencing depth across samples No filt", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_bact))$stats, labels=boxplot.stats(sample_sums(ps_bact))$stats, x=1.25)
+
+boxplot(sample_sums(ps_bact_filtered), main="Sequencing depth across samples remove singletons", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_bact_filtered))$stats, labels=boxplot.stats(sample_sums(ps_bact_filtered))$stats, x=1.25)
+
+boxplot(sample_sums(ps_bact_filtered2), main="Sequencing depth across samples 3 by 20%", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_bact_filtered2))$stats, labels=boxplot.stats(sample_sums(ps_bact_filtered2))$stats, x=1.25)
+boxplot(sample_sums(ps_bact_filtered3), main="Sequencing depth across samples 7 in 5%", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_bact_filtered3))$stats, labels=boxplot.stats(sample_sums(ps_bact_filtered3))$stats, x=1.25)
+
+```
+
+```{r, fig.width=9, fig.height=5, text.width=10}
+alpha_indexes <- estimate_richness(ps_bact, split = TRUE, measures = "Shannon")
+
+kruskal.test(alpha_indexes$Shannon ~ sample_data(ps_bact)$City)
+
+# pairwise.wilcox.test(alpha_indexes$Shannon,
+#                      sample_data(ps_bact)$City,
+#                      p.adjust.method = "BH")
+
+a <- dunn.test(alpha_indexes$Shannon, 
+          sample_data(ps_bact)$City, 
+          method="bh")
+a
+
+#alpha diversity boxplot graph
+plot_richness(ps_bact, x = "City",
+              measures = "Shannon") + geom_boxplot() + geom_point(size=1, alpha=0.5) +theme_bw()
+plot_richness(ps_bact_filtered2, x = "City",
+              measures = "Shannon") + geom_boxplot() + geom_point(size=1, alpha=0.5) +theme_bw()
+plot_richness(ps_bact_filtered3, x = "City",
+              measures = "Shannon") + geom_boxplot() + geom_point(size=1, alpha=0.5) +theme_bw()
+
+```
+
+```{r}
+theme_set(theme_bw())
+mycolors = c("#1B9E77","#7A7E3C","#D95F02","#A7675A","#7570B3",
+             "#AD4C9E","#E7298A", "#BE5067", "#66A61E", "#A6A810", 
+             "#E6AB02", "#C5900F","#A6761D", "#866E41", "#666666")
+
+#filtering method from:
+#https://joey711.github.io/phyloseq/plot_ordination-examples.html
+wh0 = genefilter_sample(ps_bact_filtered_species, filterfun_sample(function(x) x > 5), A=0.5*nsamples(ps_bact_filtered_species))
+GP1 = prune_taxa(wh0, ps_bact_filtered_species)
+
+# trans even deapth
+GP1 = transform_sample_counts(GP1, function(x) 1E6 * x/sum(x))
+
+
+GP.ord <- ordinate(GP1, "NMDS", "bray")
+GP.ord
+p1 = plot_ordination(GP1, GP.ord, type="Sample", color="City")
+p1 + geom_point(size=4, alpha=0.8)+geom_polygon(fill = NA)+scale_color_manual(values = mycolors)
+```
+
+```{r}
+dist = "bray"
+ord_meths = c("DCA", "CCA", "RDA", "NMDS", "MDS", "PCoA")
+plist = llply(as.list(ord_meths), function(i, GP1, dist){
+        ordi = ordinate(GP1, method=i, distance=dist)
+        plot_ordination(GP1, ordi, "samples", color="SampleType")
+}, GP1, dist)
+
+
+names(plist) <- ord_meths
+
+pdataframe = ldply(plist, function(x){
+    df = x$data[, 1:2]
+    colnames(df) = c("Axis_1", "Axis_2")
+    return(cbind(df, x$data))
+})
+names(pdataframe)[1] = "method"
+
+p = ggplot(pdataframe, aes(Axis_1, Axis_2, color=City, fill=City))
+p = p + geom_point(size=2) + geom_polygon()
+p = p + facet_wrap(~method, scales="free")
+p = p +scale_color_manual(values = mycolors)
+p
+```
+
+
+```{r}
+
+GP.ord <- ordinate(GP1, "PCoA", "bray")
+GP.ord
+p1 = plot_ordination(GP1, GP.ord, type="Sample", color="City")
+p1 + geom_point(size=4, alpha=0.8)+geom_polygon(fill = NA)+scale_color_manual(values = mycolors)
+```
+
+
+Ar vecajiem datiem
+
+```{r}
+wh0 = genefilter_sample(ps_bact, filterfun_sample(function(x) x > 5), A=0.5*nsamples(ps_bact))
+GP1 = prune_taxa(wh0, ps_bact)
+GP1 = transform_sample_counts(GP1, function(x) 1E6 * x/sum(x))
+
+GP.ord <- ordinate(GP1, "NMDS", "bray")
+GP.ord
+p1 = plot_ordination(GP1, GP.ord, type="Sample", color="City")
+p1 + geom_point(size=4, alpha=0.8)+geom_polygon(fill = NA)+scale_color_manual(values = mycolors)
+```
+
+```{r}
+dist = "bray"
+ord_meths = c("DCA", "CCA", "RDA", "NMDS", "MDS", "PCoA", "PCA")
+plist = llply(as.list(ord_meths), function(i, GP1, dist){
+        ordi = ordinate(GP1, method=i, distance=dist)
+        plot_ordination(GP1, ordi, "samples", color="SampleType")
+}, GP1, dist)
+
+
+names(plist) <- ord_meths
+
+pdataframe = ldply(plist, function(x){
+    df = x$data[, 1:2]
+    colnames(df) = c("Axis_1", "Axis_2")
+    return(cbind(df, x$data))
+})
+names(pdataframe)[1] = "method"
+
+p = ggplot(pdataframe, aes(Axis_1, Axis_2, color=City, fill=City))
+p = p + geom_point(size=2) + geom_polygon()
+p = p + facet_wrap(~method, scales="free")
+p = p +scale_color_manual(values = mycolors)
+p
+```
+
+
+
+```{r}
+library(vegan)
+
+abund_table_tax
+m1
+set.seed(123)
+anosim(m1, metadata$Regional_Hospital, distance = "bray", permutations = 999)
+anosim(t(select(abund_table_tax, -c("Total", "Relative.Frequency"))), metadata$Regional_Hospital, distance = "bray", permutations = 999)
+
+```
+
+
+### permonova
+
+```{r}
+
+tax_bray <- phyloseq::distance(ps_bact, method = "bray")
+
+
+adonis2_rez<-adonis2(tax_bray ~ Regional_Hospital, data = sampledf)
+
+print(adonis2_rez)
+```
+
+
+
+```{r}
+# taxonomic composition top30 taxa
+# microVIZ
+# https://david-barnett.github.io/microViz/
+
+
+# importē tax table (ne ista, tikai tapec ka grafikiem vajag)
+tax.matrix = read_excel("~/ARG_waste_water/tax_table_species.xlsx")
+tax.matrix = data.frame(tax.matrix, row.names = 1)
+#making phyloseq object
+library(phyloseq)
+OTU = otu_table(t(m1), taxa_are_rows = TRUE)
+SAM = sample_data(meta_table)
+TAX = tax_table(as.matrix(tax.matrix))
+head(TAX)
+taxa_names(TAX)
+pseq = phyloseq(otu_table(OTU),sample_data(as.data.frame(SAM)), TAX)
+# make phyloseq object
+pseq = merge_phyloseq(phyloseq(OTU), sample_dataSAM, TAX)
+pseq
+
+#Setting up environment for visualization
+options(width = 100)
+library(microViz)
+library(ggplot2)
+knitr::opts_chunk$set(fig.height = 6, fig.width = 9)
+
+# GROUP AVERAGE COMPOSITION barplot
+pseq %>%
+  phyloseq::merge_samples(group = "City") %>%
+  comp_barplot(tax_level='ARG', n_taxa = 10, bar_width = 0.8, bar_outline_colour = NA) +
+  coord_flip() + labs(x = NULL, y = NULL)
+
+# FACETING - TAXONOMIC COMPOSITION BY SAMPLES (taxplots)
+pseq %>%
+  ps_mutate(
+    Group = factor(City)) %>%
+  comp_barplot(tax_level = "Species", n_taxa = 30,
+               sample_order = "bray", bar_outline_colour = NA) +
+  facet_grid(rows = vars(Group),scales = "free", space = "free") +
+  coord_flip()+
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+
+```
+
+
+# Suplementary and experimetns
+
+```{r, me_plots}
+	
+# library(microbiomeExplorer)
+# scaffolds_MRexperiment_obj <- phyloseq_to_metagenomeSeq(physeq_scaffolds)
+# 
+plotAbundance(scaffolds_MRexperiment_obj,
+              level = "ARG",
+              x_var = "City",
+              facet1 = NULL,
+              facet2 = NULL,
+              ind = 1:10,
+              plotTitle = "Top 10 ARG features",
+              ylab = "Percentage")
+# 
+# plotSingleFeature(scaffolds_MRexperiment_obj,
+#             x_var = "City",
+#             ind = 1:10,
+#             plotTitle = "Percentage of AcrF",
+#             facet1 = NULL,
+#             facet2 = NULL,
+#             feature = "TEM-1",
+#             ylab = "Percentage",
+#             log = TRUE,
+#             showPoints = TRUE)
+# 
+# plotHeatmap(scaffolds_MRexperiment_obj,
+#             features = NULL,
+#             log = TRUE,
+#             sort_by = "Variance",
+#             nfeat = 50,
+#             col_by = c("City"),
+#             row_by = "",
+#             plotTitle = "Top 50 features sorted by Variance at genus level"
+# )
+# 
+# 
+# distMat <- computeDistMat(scaffolds_MRexperiment_obj, "bray")
+# pcaVals <- calculatePCAs(distMat, 
+#                          c("PC1", "PC2"))
+# 
+# 
+# 
+# diffResults <- runDiffTest(scaffolds_MRexperiment_obj,
+#                         level = "ARG",
+#                         phenotype = "Regional_Hospital",
+#                         phenolevels = c("yes", "no"),
+#                         method = "DESeq2")
+# 
+# head(diffResults)
+# 
+# 
+# makeQCPlot(scaffolds_MRexperiment_obj, col_by = "City",
+#        log = "none",
+#        filter_feat = 101,
+#        filter_read = 511,
+#        allowWebGL = FALSE)
+# 
+# 
+# plotlySampleBarplot(scaffolds_MRexperiment_obj,
+#                     col_by = "City")
+# 
+
+```
+
+
+```{r}
+
+
+# Run for single variable first to test
+test_result <- try({
+    run_posthoc_analysis(diversity_data, "Shannon", "City")
+})
+
+variables_to_test <- c("City", "Regional_Hospital", "Hospital_Type", "Population", 
+                       "Industrial_wastewater_impact", "Industrial_wastewater_impact_from_food",
+                       "Dairy_farming", "Meat_production", "Metal_processing", "Washrooms")
+
+if(inherits(test_result, "try-error")) {
+    print("Error in test run. Check data structure:")
+    print(str(diversity_data))
+} else {
+    # If test successful, run for all variables
+    posthoc_results <- lapply(variables_to_test, function(var) {
+        run_posthoc_analysis(diversity_data, "Shannon", var)
+    })
+    names(posthoc_results) <- variables_to_test
+}
+
+
+# Modified loop for creating visualizations
+for(var in variables_to_test) {
+    print(paste("Creating visualization for", var))
+    tryCatch({
+        create_posthoc_visualization(diversity_data, var, posthoc_results)
+    }, error = function(e) {
+        print(paste("Error creating visualization for", var, ":", e$message))
+    })
+}
+
+# Additional non-parametric analyses
+# Kruskal-Wallis with post-hoc Dunn's test
+kruskal_results <- lapply(variables_to_test, function(var) {
+    kruskal.test(as.formula(paste("Shannon ~", var)), data = diversity_data)
+})
+names(kruskal_results) <- variables_to_test
+
+# Mann-Whitney U tests for binary variables
+binary_vars <- c("Regional_Hospital", "Dairy_farming", "Meat_production", "Washrooms")
+wilcox_results <- lapply(binary_vars, function(var) {
+    wilcox.test(as.formula(paste("Shannon ~", var)), data = diversity_data)
+})
+names(wilcox_results) <- binary_vars
+
+
+summary_table <- create_summary_table(posthoc_results, kruskal_results, wilcox_results)
+print(summary_table)
+```
+
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+library(ggpubr)
+library(viridis)
+library(tidyr)
+library(dplyr)
+
+# 1. Enhanced Boxplot with Individual Points and Statistics
+create_enhanced_boxplot <- function(data, x_var, y_var = "Shannon") {
+    ggplot(data, aes_string(x = x_var, y = y_var)) +
+        geom_boxplot(aes(fill = get(x_var)), alpha = 0.7) +
+        geom_jitter(width = 0.2, alpha = 0.5) +
+        stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white") +
+        theme_bw() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1),
+              legend.position = "none") +
+        labs(title = paste("Shannon Diversity by", x_var),
+             y = "Shannon Diversity Index",
+             x = x_var) +
+        scale_fill_viridis_d()
+}
+
+# 2. Violin Plot with Box Plot and Points
+create_violin_plot <- function(data, x_var, y_var = "Shannon") {
+    ggplot(data, aes_string(x = x_var, y = y_var)) +
+        geom_violin(aes(fill = get(x_var)), alpha = 0.7) +
+        geom_boxplot(width = 0.1, fill = "white", alpha = 0.7) +
+        geom_jitter(width = 0.1, alpha = 0.5) +
+        theme_bw() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1),
+              legend.position = "none") +
+        labs(title = paste("Distribution of Shannon Diversity by", x_var),
+             y = "Shannon Diversity Index",
+             x = x_var) +
+        scale_fill_viridis_d()
+}
+
+# 3. Density Plot by Groups
+create_density_plot <- function(data, x_var, y_var = "Shannon") {
+    ggplot(data, aes_string(x = y_var, fill = x_var)) +
+        geom_density(alpha = 0.5) +
+        theme_bw() +
+        labs(title = paste("Density Distribution of Shannon Diversity by", x_var),
+             x = "Shannon Diversity Index",
+             y = "Density") +
+        scale_fill_viridis_d(name = x_var)
+}
+
+# 4. Interactive Variables Plot
+create_interaction_plot <- function(data, var1, var2, y_var = "Shannon") {
+    ggplot(data, aes_string(x = var1, y = y_var, fill = var2)) +
+        geom_boxplot(alpha = 0.7) +
+        theme_bw() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        labs(title = paste("Shannon Diversity:", var1, "vs", var2),
+             y = "Shannon Diversity Index") +
+        scale_fill_viridis_d(name = var2)
+}
+
+# 5. Time Series Plot - Modified version
+create_time_series <- function(data) {
+    # Ensure date is in proper format
+    data$Date <- as.Date(data$Date)
+    
+    ggplot(data, aes(x = Date, y = Shannon, color = City, group = City)) +
+        geom_line() +
+        geom_point() +
+        theme_bw() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1),
+              legend.position = "right") +
+        labs(title = "Shannon Diversity Over Time",
+             y = "Shannon Diversity Index") +
+        scale_color_viridis_d(name = "City") +
+        scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m-%d")
+}
+
+
+# 6. Correlation Heatmap for Numeric Variables
+create_correlation_heatmap <- function(data) {
+    # Select numeric columns
+    numeric_data <- data %>% select_if(is.numeric)
+    cor_matrix <- cor(numeric_data, use = "complete.obs")
+    
+    melted_cor <- reshape2::melt(cor_matrix)
+    
+    ggplot(melted_cor, aes(x = Var1, y = Var2, fill = value)) +
+        geom_tile() +
+        scale_fill_viridis() +
+        theme_bw() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        labs(title = "Correlation Heatmap",
+             x = "", y = "") +
+        geom_text(aes(label = round(value, 2)), size = 3)
+}
+
+# Create and arrange plots
+variables_to_plot <- c("City", "Hospital_Type", "Industrial_wastewater_impact", 
+                      "Population", "Regional_Hospital")
+
+# Create list of plots
+boxplots <- lapply(variables_to_plot, function(var) create_enhanced_boxplot(diversity_data, var))
+violin_plots <- lapply(variables_to_plot, function(var) create_violin_plot(diversity_data, var))
+density_plots <- lapply(variables_to_plot, function(var) create_density_plot(diversity_data, var))
+
+# Create interaction plots for key variable combinations
+interaction_plots <- list(
+    create_interaction_plot(diversity_data, "City", "Regional_Hospital"),
+    create_interaction_plot(diversity_data, "City", "Hospital_Type"),
+    create_interaction_plot(diversity_data, "Industrial_wastewater_impact", "Population")
+)
+
+# Time series plot
+time_series_plot <- create_time_series(diversity_data)
+
+# Correlation heatmap
+correlation_plot <- create_correlation_heatmap(diversity_data)
+
+# Arrange and save plots
+pdf("diversity_visualizations.pdf", width = 15, height = 10)
+
+# Boxplots page
+do.call(grid.arrange, c(boxplots, ncol = 2))
+
+# Violin plots page
+do.call(grid.arrange, c(violin_plots, ncol = 2))
+
+# Density plots page
+do.call(grid.arrange, c(density_plots, ncol = 2))
+
+# Interaction plots page
+do.call(grid.arrange, c(interaction_plots, ncol = 2))
+
+# Time series and correlation
+grid.arrange(time_series_plot, correlation_plot, ncol = 1, heights = c(2, 1.5))
+dev.off()
+
+# Additional detail plot for specific variables of interest
+create_detailed_city_plot <- function(data) {
+    ggplot(data, aes(x = reorder(City, Shannon, FUN = median), y = Shannon)) +
+        geom_boxplot(aes(fill = Regional_Hospital), alpha = 0.7) +
+        geom_jitter(width = 0.2, alpha = 0.5) +
+        stat_summary(fun = mean, geom = "point", shape = 23, size = 3, fill = "white") +
+        theme_bw() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        labs(title = "Shannon Diversity by City and Hospital Status",
+             y = "Shannon Diversity Index",
+             x = "City") +
+        scale_fill_viridis_d(name = "Regional Hospital")
+}
+
+detailed_city_plot <- create_detailed_city_plot(diversity_data)
+print(detailed_city_plot)
+```
+
+
+## Mgnify examples
+
+
+```{r, show_data}
+options(repr.plot.width=4, repr.plot.height=4)
+hist(log10(sample_sums(ps_scaffolds_filtered)), breaks=50, main="Sample size distribution", xlab="Sample size (log10)", ylab="Frequency", col="#007c80")
+
+ps_good = ps_scaffolds_filtered
+
+ps_final = filter_taxa(ps_good, function(x) sum(x) > 1, prune=TRUE)
+
+# Show some stats on the sequencing depth across samples.
+
+max_difference = max(sample_sums(ps_final))/min(sample_sums(ps_final))
+
+sprintf("The max difference in sequencing depth is %s", max_difference)
+
+options(repr.plot.width=4, repr.plot.height=5)
+
+boxplot(sample_sums(ps_final), main="Sequencing depth across samples", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_final))$stats, labels=boxplot.stats(sample_sums(ps_final))$stats, x=1.25)
+```
+
+
+```{r, cmpDist}
+
+# Generating the methods list and discarding those that are not included in adonis methods list
+dist_methods = unlist(distanceMethodList)
+dist_methods = dist_methods[c(-(1:4),-(20:47))]
+
+# Iterating through the list to save the plot
+plist = vector("list", length(dist_methods))
+names(plist) = dist_methods
+for( i in dist_methods ){
+    
+    # exclude raupe, because causes analysis to crash
+    if(i == "raup"){
+        next
+    }
+    # Calculate distance matrix
+    iDist = phyloseq::distance(ps_scaffolds_CSS, method=i)
+    # Calculate ordination
+    iMDS  = ordinate(ps_scaffolds_CSS, "MDS", distance=iDist, correction="lingoes")
+    ## Make plot
+    # Don't carry over previous plot (if error, p will be blank)
+    p = NULL
+    # Create plot, store as temp variable, p
+    p = plot_ordination(ps_scaffolds_CSS, iMDS, color="env_label")
+    # Add title to each plot
+    p = p + ggtitle(paste("MDS using distance method ", i, sep=""))
+    # Save the graphic to file.
+    plist[[i]] = p
+}
+
+# Create a combined plot
+df = ldply(plist, function(x) x$data)
+names(df)[1] = "distance"
+p = ggplot(df, aes(Axis.1, Axis.2, color=Regional_Hospital))
+p = p + geom_point(size=3, alpha=0.5)
+p = p + facet_wrap(~distance, scales="free")
+p = p + ggtitle("MDS on various distance metrics for City Waste Water dataset") + 
+    stat_ellipse(level=0.95, type="norm", geom="polygon", alpha=0, aes(color=Regional_Hospital)) + 
+    theme_bw() + 
+    scale_color_manual(values=c("#0a5032", "#a1be1f")) + 
+    labs(color = "Regional_Hospital") 
+
+options(repr.plot.width=12, repr.plot.height=10)
+p
+
+```
+
+```{r, siamADNOIS}
+
+metadata = data.frame(sample_data(ps_scaffolds_CSS))
+css_beta = phyloseq::distance(ps_scaffolds_CSS, method="mountford")
+adonis2(css_beta ~ Hospital_Type, data = metadata, perm=1e3)
+
+```
+
+```{r, betdis}
+bd = betadisper(css_beta, metadata$'Hospital_Type')
+anova(bd)
+```
+
+### siamcat
+
+Detection of differentially abundant taxa
+
+```{r, tax_glom}
+psglom = tax_glom(relab_ps, "ARG")
+```
+
+```{r, warning=FALSE, message=FALSE, siamcatPlot, fig.width=10, fig.height=7}
+
+source("../src/diversity_anlaysis.r")
+
+# Define your list of label and case pairs
+label_case_pairs <- list(
+  list(label = "City", case = "Sigulda"),
+  list(label = "City", case = "Smiltene"),
+  list(label = "City", case = "Salaspils"),
+  list(label = "Hospital_Type", case = "2"),
+  list(label = "Washrooms", case = "1"),
+  list(label = "Population", case = "Extra_Large"),
+  list(label = "Industrial_wastewater_impact_from_food", case = "High"),
+  list(label = "Dairy_farming", case = "1")
+  # Add more pairs as needed
+)
+
+#psglom = tax_glom(relab_ps, "ARG")
+
+# Loop through the pairs
+for (pair in label_case_pairs) {
+  label_column <- pair$label
+  case_value <- pair$case
+  
+  # Create a unique output prefix for each pair
+  output_prefix <- paste0("siamcat_", label_column, "_", case_value)
+  
+  # Run the function
+  siamcat_result <- create_siamcat_plot(psglom, label_column, case_value, output_prefix)
+  
+  # You can do additional processing with siamcat_result here if needed
+  
+  volcano.plot(siamcat_result)
+  # Print a message to indicate progress
+  cat("Completed processing for", label_column, "with case", case_value, "\n")
+}
+
+```
+
+
+```{r, assoc_hosp}
+label_case_pairs <- list(
+  list(label = "Hospital_Type", case = "0"),
+  list(label = "Hospital_Type", case = "2"),
+  list(label = "Hospital_Type", case = "3"),
+  list(label = "Hospital_Type", case = "4"),
+  list(label = "Hospital_Type", case = "Specilised"),
+  list(label = "Hospital_Type", case = "Other"),
+  list(label = "Hospital_Type", case = "Red_cross"),
+  list(label = "Hospital_Type", case = "Branch")
+  # Add more pairs as needed
+)
+
+#psglom = tax_glom(relab_ps, "ARG")
+
+# Loop through the pairs
+for (pair in label_case_pairs) {
+  label_column <- pair$label
+  case_value <- pair$case
+  
+  # Create a unique output prefix for each pair
+  output_prefix <- paste0("siamcat_", label_column, "_", case_value)
+  
+  # Run the function
+  siamcat_result <- create_siamcat_plot(psglom, label_column, case_value, output_prefix)
+  
+  # You can do additional processing with siamcat_result here if needed
+  
+  volcano.plot(siamcat_result)
+  # Print a message to indicate progress
+  cat("Completed processing for", label_column, "with case", case_value, "\n")
+}
+```
+
+
+```{r, createObject}
+
+# filter NA values
+#psglom_mod = subset_samples(psglom, Industrial_wastewater_impact != "Na")
+psglom_mod = psglom
+sc_label = create.label(meta=sample_data(psglom_mod), label='City', case='Jelgava')
+
+# Creating the siamcat object
+siamcat_obj = siamcat(phyloseq=psglom_mod, label=sc_label)
+
+siamcat_obj = filter.features(siamcat_obj, filter.method='abundance', cutoff=1e-03)
+siamcat_obj = filter.features(siamcat_obj, filter.method='prevalence', cutoff=0.05, feature.type='filtered')
+options(repr.plot.width=18, repr.plot.height=7)
+
+siamcat_obj = check.associations(siamcat_obj)
+association.plot(siamcat_obj, panels=c("fc", "prevalence"), prompt = FALSE, verbose = 0)
+
+# The results table of differentially abundant OTUs are stored in associations(siamcat_obj)
+diff_otus = as.list(rownames(associations(siamcat_obj)[associations(siamcat_obj)$p.adj < 0.05, ]))
+
+# The taxonomic label per OTU is stored in tax_table(psglom)
+tax_table(psglom_mod)[rownames(tax_table(psglom_mod)) %in% diff_otus, ]
+
+```
+
+
+
+## Interactive Tools
+
+```{r}
+
+library(phyloseq)
+write.csv(otu_table(ps_scaffolds_filtered), "count.csv")
+write.csv(tax_table(ps_scaffolds_filtered), "tax.csv")
+write.csv(metadata, "sample.csv")
+
+
+library(animalcules)
+#run_animalcules()
+
+
+runMicrobiomeExplorer()
+
+# ord_explore(ps_scaffolds_filtered)
+```

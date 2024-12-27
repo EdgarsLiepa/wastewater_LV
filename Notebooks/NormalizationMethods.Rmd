@@ -1,0 +1,245 @@
+
+
+
+
+```{r}
+# Load the data
+
+ARG_CONTIGS_OLD = "../Resistance_genes/AMR_genes_RGI_contigs.csv"
+
+data <- read.csv(ARG_CONTIGS, header = TRUE, row.names = 1)
+
+# read CARD db json
+#  require(jsonlite)
+#  card_db <- fromJSON("../../DB/CARD_02_2024/card.json")
+
+# read aro index
+aro_index <- read.csv("../../DB/CARD_02_2024/aro_index.tsv", header = TRUE, sep = "\t")
+
+
+# add new column empty to data with short name of ARO
+data$card_short_name <- NA
+data$antibiotic <- NA
+
+
+for (i in 1:length(rownames(data))) {
+  if (rownames(data)[i] %in% aro_index$ARO.Name) {
+      # print rowname aro short name in one line
+    print(paste(rownames(data)[i], " ", aro_index$CARD.Short.Name[aro_index$ARO.Name == rownames(data)[i]], " ", aro_index$Drug.Class[aro_index$ARO.Name == rownames(data)[i]]))
+    # add to data
+    data$card_short_name[i] <- aro_index$CARD.Short.Name[aro_index$ARO.Name == rownames(data)[i]]
+    data$antibiotic[i] <- aro_index$Drug.Class[aro_index$ARO.Name == rownames(data)[i]]
+    
+  }
+}
+
+
+```
+
+```{r}
+# With Total counts in sample
+
+data/colSums(data)
+
+```
+
+```{r}
+# trimmed mean of M-values (TMM) and relative log expression (RLE) normalization methods
+
+
+
+
+```
+
+
+```{r}
+
+# Finally, we could imagine a scenario in which you are only interested in the proportion of different annotated features in your sample. One can then instead divide to the total number of reads mapped to something in the database used. That will give relative proportions, and will remove a lot of “noise”, but will have the limitation that only the well-defined part of the microbial community can be studied, and the rest is ignored.
+
+# (counts of gene X / total number of mapped reads)
+# From: https://metagenomics-workshop.readthedocs.io/en/2014-5/annotation/normalization.html
+
+```
+
+```{r}
+
+# creare empty object 
+sample1 <- data.frame()
+sample1$Antibiotic <- V300072773_L01_125_rgi$Antibiotic
+
+
+```
+
+
+
+```{r}
+# Load necessary library
+library(jsonlite)
+library(purrr)
+
+# Load the JSON data
+file_path <- "../../DB/CARD_02_2024/card.json"  # Update this to the path of your JSON file
+CARD <- fromJSON(file_path)
+
+# Define a function to search and print the desired information
+print_aminoglycoside_antibiotic_class <- function(data) {
+  # Assuming 'ARO_category' is a list or similar structure in the data
+  if ("ARO_category" %in% names(data)) {
+    for (aro_category in data$ARO_category) {
+      if (aro_category$category_aro_name == "aminoglycoside antibiotic") {
+        print(aro_category$category_aro_class_name)
+      }
+    }
+  }
+}
+
+# Execute the function with the loaded data
+print_aminoglycoside_antibiotic_class(data)
+
+# get all keys in all levels from data list object
+# https://stackoverflow.com/questions/2275896/how-to-get-all-keys-in-all-levels-of-a-nested-dictionary
+data$"1"$ARO_description
+
+```
+
+```{r}
+
+obj <- CARD$"99"
+
+for (models in CARD) {
+  # check if model size is bigger than 1
+  if (length(models) > 2 ) {
+    # if ARO_name is in the list
+    if ("AAC(6')-Ib9" == models$ARO_name) {
+      # get short name
+      print(models$CARD_short_name)
+      
+      # print ARO_name
+      # print(models$ARO_category)
+      
+      for(aro_id in names(models$ARO_category)) {
+        category <- models$ARO_category[[aro_id]]
+        
+        print("Antibiotics")
+        
+        # Check if the category class name is "Antibiotic"
+        if(category$category_aro_class_name == "Antibiotic") {
+          # Add the category to the matched list
+          print(category$category_aro_name)
+        }
+        
+        print("Drug Classes")
+        
+        if(category$category_aro_class_name == "Drug Class") {
+          # Add the category to the matched list
+          print(category$category_aro_name)
+        }
+      }
+    }
+  }
+}
+  
+#get list size
+length(models)
+```
+
+```{r}
+
+basepath <- "~/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/resistance_genes_RGI_contigs/"
+
+# write description for this function
+g_length <- function(gene, sample, rgi_rez) {
+  
+  # find in CARD by aro name
+  gene_length <- 0
+ 
+  # find all rows with gene name
+  gene_rows <- rgi_rez[rgi_rez$Best_Hit_ARO == gene,]
+  
+  # calculate length by Stop - Start
+  gene_length <- gene_rows$Stop - gene_rows$Start
+  
+  # return mean length 
+  return(mean(gene_length))
+  
+}
+
+# for gene in arg_contig_t
+# get the length of the gene
+gene_t <- arg_contig_t
+gene_t <- gene_t[, !(names(gene_t) %in% c("ARG"))]
+gene <- "tet(M)"
+sample <- "V300072773_L01_41"
+    
+
+# create a named vector for gene lenghts
+
+# get gene lengths from RGI results
+for (sample in colnames(gene_t)){
+  
+  gene_lengths <- c()
+  # load sample table from RGI results
+  rgi_rez <- read.csv(paste(basepath, sample, "_rgi.txt", sep = ""), sep = "\t", row.names = "Contig", header = TRUE)
+  
+  for (gene in rownames(gene_t)) {
+    
+      # get the length of the gene length per kilobase
+      gene_len <- g_length(gene, sample, rgi_rez) / 1000
+      
+      # add sample vector
+      gene_lengths <- c(gene_lengths, gene_len)
+  }
+  
+  
+  # divide sample collumn in gene_t by gene_lengths
+  sample_row <- gene_t[,sample] / gene_lengths
+  
+  # Next, calculate the per-sample sum of RPKs
+  
+  sample_row[is.nan(sample_row)] <- 0
+  sum_RPK <- sum(sample_row)
+  
+  # Finally, divide each column of RPK by the sum of RPKs and multiply by 1e6 to get TPM
+  gene_t[,sample] <- sample_row / sum_RPK * 1e6
+  
+}
+
+```
+
+```{r}
+
+# Assuming 'CARD' is your list and 'target_AR_name' is the gene name you're looking for
+target_AR_name <- "ErmB"
+
+# Find the model(s) that contain the target ARO_name
+matching_models <- lapply(CARD, function(model) {
+  if (is.list(model) && !is.null(model$ARO_name) && model$ARO_name == target_AR_name) {
+    return(model)
+  }
+})
+
+# Remove NULL elements from the list (models that did not match)
+matching_models <- matching_models[!sapply(matching_models, is.null)]
+
+# Now `matching_models` contains the list elements (models) where AR_name matches the target
+
+
+```
+
+
+```{r}
+
+
+# metagenomeSeq-CSS
+
+#
+#
+#
+
+
+#Reversed cumulative sum scaling (RCSS)
+
+#RCSS can be implemented in R using the function colQuantiles() from the matrixStats package and the function sum() over a logical vector. RCSS is included in MetaAnalystCitation148 as one of five normalization methods (i.e., total counts, median, upper quartile, reversed RCSS, and z-score) of data preprocessing for subsequent analysis.
+
+```
+

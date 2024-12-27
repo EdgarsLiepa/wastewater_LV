@@ -1,0 +1,912 @@
+
+
+```{r}
+CARDDB = "~/DB/CARD_02_2024/card.json"
+
+METADATA_PATH =  "../sampleMetadata.csv"
+metadata <- read.csv(METADATA_PATH, header = TRUE, colClasses = c(Date = "character", Dairy_farming="character", Meat_production="character", Metal_processing="character", Washrooms="character"))
+
+```
+
+
+
+## Bacterial abundance
+
+Read summarized Kraken2 report biome file
+that was generated with [*kraken-biom*](https://github.com/smdabdoub/kraken-biom) tool from Kraken2 otputs
+
+### reading sequencing rads
+
+```{r, read_kraken_res}
+merged_metagenomes <- import_biom("/home/edgars.liepa/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/kraken_res/waste_water.biome")
+
+# Clean Tax names
+merged_metagenomes@tax_table@.Data <- substring(merged_metagenomes@tax_table@.Data, 4)
+# Set collumn names
+colnames(merged_metagenomes@tax_table@.Data)<- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+
+# Fix Sample names
+sample_names(merged_metagenomes) <- gsub("_k2_report$", "", sample_names(merged_metagenomes))
+
+# Add metadata
+sample_data(merged_metagenomes) <- sample_data(metadata)
+ 
+```
+
+Set Sample names to descriptive City names
+
+```{r, rename_to_city_names}
+# Create a named vector for mapping
+name_mapping <- setNames(metadata$Sample, rownames(metadata))
+
+# Use the mapping to rename the columns
+sample_names(merged_metagenomes) <- name_mapping[sample_names(merged_metagenomes)]
+
+```
+
+
+
+### filtering
+
+Subset bacteria only, since we are only interested in those.
+
+```{r, filter}
+merged_metagenomes <- subset_taxa(merged_metagenomes, Kingdom == "Bacteria")
+
+barplot(sample_sums(merged_metagenomes), las = 2)
+
+plot_bar(merged_metagenomes, fill = "City")
+
+options(repr.plot.width=4, repr.plot.height=4)
+hist(log10(sample_sums(merged_metagenomes)), breaks=50, main="Sample size distribution", xlab="Sample size (log10)", ylab="Frequency", col="#007c80")
+
+```
+
+Show Total sequence and OTU counts.
+
+```{r, counts_bact}
+print("Total sequence count before filtering")
+sum(sample_sums(merged_metagenomes))
+print("Tax before filtering")
+dim(otu_table(merged_metagenomes))
+```
+
+
+
+#### Remove Outliers
+
+Talsi 3, was compromised by an unexpected industrial event - a dairy company wastewater discharge that occurred during the sampling period. This contamination is clearly visible in the data as an abnormal spike in Lactobacillus helveticus abundance. Here it can be seen that low abundance of reads in Salaspils show increased relative diversity of most abundant Species.
+
+
+Remove samples based on sample size distribution and outlier event on Salspils.2 and Talsi.3
+
+
+```{r, rm_outlier}
+
+ps_good = subset_samples(merged_metagenomes, sample_data(merged_metagenomes)$Sample != "Salaspils.2")
+ps_good = subset_samples(ps_good, sample_data(ps_good)$Sample != "Talsi.3")
+
+hist(log10(sample_sums(ps_good)), breaks=50, main="Sample size distribution", xlab="Sample size (log10)", ylab="Frequency", col="#007c80")
+
+boxplot(sample_sums(ps_good), main="Sequencing depth across samples remove singletons", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_good))$stats, labels=boxplot.stats(sample_sums(ps_good))$stats, x=1.25)
+```
+
+Difference between samples with largest and smallest sample deapth.
+
+```{r, filter_bact}
+
+max_difference = max(sample_sums(ps_good))/min(sample_sums(ps_good))
+sprintf("The max difference in sequencing depth is %s", max_difference)
+```
+
+
+#### Filter low abundance tax
+
+```{r, filter_low_abundance}
+###
+# Different options for filters
+###
+
+# Filter Singletons
+ps_bact_filtered = filter_taxa(ps_good, function(x) sum(x) > 1, TRUE)
+# Remove taxa not seen more than 3 times in at least 20% (9) of the samples. This protects against an OTU with small mean & trivially large C.V.
+#ps_bact_filtered = filter_taxa(ps_bact, function(x) sum(x > 3) > (0.2*length(x)), TRUE)
+
+# Filter OTUs to include only those with at least 7 reads in 5% (2) of the samples
+#ps_bact_filtered = filter_taxa(merged_metagenomes, function(x) sum(x > 7) > (0.05 * length(x)), TRUE)
+
+```
+
+Difference between samples with largest and smallest sample deapth.
+
+```{r, filter_bact}
+
+max_difference = max(sample_sums(ps_bact_filtered))/min(sample_sums(ps_bact_filtered))
+sprintf("The max difference in sequencing depth is %s", max_difference)
+```
+
+```{r}
+# Convert the filtered OTU table to a data frame
+data_otu_filt = data.frame(otu_table(ps_bact_filtered))
+
+
+# Print the dimensions of the filtered data
+print("Phyloseq ARG scaffolds after filtering")
+dim(data_otu_filt)
+
+# Print the total sequence count after filtering
+print("Filtered sequence count")
+sum(data_otu_filt)
+
+```
+
+
+```{r}
+# Calculate and print the percentage of sequences dropped from the original dataset
+original_seq_count = sum(data.frame(otu_table(ps_good)))
+filtered_seq_count = sum(data_otu_filt)
+seq_dropped_percentage = ((original_seq_count - filtered_seq_count) / original_seq_count) * 100
+
+
+print("Sequence % dropped from the dataset:")
+seq_dropped_percentage
+
+```
+
+
+
+```{r}
+
+options(repr.plot.width=4, repr.plot.height=5)
+
+boxplot(sample_sums(ps_bact_filtered), main="Sequencing depth across samples remove singletons", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_bact_filtered))$stats, labels=boxplot.stats(sample_sums(ps_bact_filtered))$stats, x=1.25)
+```
+
+
+### Normalization
+
+
+Normalization by subsampling (rarefaction)
+
+```{r}
+tab <- otu_table(ps_bact_filtered)
+class(tab) <- "matrix"
+tab <- t(tab)
+
+rare <- rarecurve(tab, step=1000, lwd=2, ylab="OTU",  label=F)
+rare
+```
+
+
+```{r}
+
+df=as.data.frame(sample_sums(ps_bact_filtered))
+head(df[order( df[,1] ),],1)
+
+ps_rare = rarefy_even_depth(ps_bact_filtered, sample.size=5010685, replace=FALSE, rngseed=123, verbose=FALSE)
+
+```
+
+
+
+Normalization by cumulative sum scaling (CSS)
+
+```{r}
+ps_CSS = normalize(ps_bact_filtered, method="CSS")
+```
+
+
+### Tax Composition
+
+```{r}
+
+# subset to genus
+ps_bact_filtered_genus <- tax_glom(ps_bact_filtered, taxrank = "Genus")
+
+ps_bact_filtered_genus <- ps_bact_filtered_genus %>% tax_fix(unknowns = c("Candidatus Nardonella"))
+
+ps_bact_filtered_genus %>%
+    ps_mutate(Group = factor(sample_data(ps_bact_filtered_genus)$City)) %>%
+    tax_agg("Genus") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "Genus", 
+                 sample_order = sample_data(ps_bact_filtered_genus)[order(sample_data(ps_bact_filtered_genus)$Sample), ]$Sample, 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(legend.position = "bottom", axis.text.x = element_text(angle = 90, hjust = 1))+
+    facet_grid(~Group, scales = "free", space = "free")
+
+# subset to species
+ps_bact_filtered_species <- tax_glom(ps_bact_filtered, taxrank = "Species")
+
+## Fix species names
+tax_table(ps_bact_filtered_species) <- tax_table(ps_bact_filtered_species) %>%
+  as.data.frame() %>%
+  mutate(Genus_species = case_when(
+    is.na(Species) | Species == "" ~ Genus,
+    TRUE ~ paste(Genus, Species, sep="_")
+  )) %>%
+  as.matrix()
+
+## Plot
+ps_bact_filtered_species %>%
+    ps_mutate(Group = factor(sample_data(ps_bact_filtered_species)$City)) %>%
+    tax_agg("Genus_species") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "Genus_species", 
+                 sample_order = sample_data(ps_bact_filtered_species)[order(sample_data(ps_bact_filtered_species)$Sample), ]$Sample, 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(legend.position = "bottom", axis.text.x = element_text(angle = 90, hjust = 1))+
+    facet_grid(~Group, scales = "free", space = "free")
+```
+Show aggregated species plot after samples are removed.
+
+```{r, tax_clean}
+ps_bact_filtered_genus %>% phyloseq::merge_samples(group = "City") %>%
+    comp_barplot(tax_level = "Genus", 
+                 n_taxa = 20)+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ps_bact_filtered_species %>%
+    phyloseq::merge_samples(group = "City") %>%
+    comp_barplot(tax_level = "Genus_species", 
+                 n_taxa = 15)+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r, species_clean}
+
+# subset to species
+ps_bact_filtered_species_rare <- tax_glom(ps_rare, taxrank = "Species")
+
+## Fix species names
+tax_table(ps_bact_filtered_species_rare) <- tax_table(ps_bact_filtered_species_rare) %>%
+  as.data.frame() %>%
+  mutate(Genus_species = case_when(
+    is.na(Species) | Species == "" ~ Genus,
+    TRUE ~ paste(Genus, Species, sep="_")
+  )) %>%
+  as.matrix()
+
+
+# subset to species
+ps_bact_filtered_species_css <- tax_glom(ps_CSS, taxrank = "Species")
+
+## Fix species names
+tax_table(ps_bact_filtered_species_css) <- tax_table(ps_bact_filtered_species_css) %>%
+  as.data.frame() %>%
+  mutate(Genus_species = case_when(
+    is.na(Species) | Species == "" ~ Genus,
+    TRUE ~ paste(Genus, Species, sep="_")
+  )) %>%
+  as.matrix()
+
+```
+
+### Most abundant organisms
+
+Show Top 15 most abundant organisms
+
+```{r}
+abu_table <- as.data.frame(otu_table(ps_bact_filtered_species))
+tax_table <- as.data.frame(tax_table(ps_bact_filtered_species))
+rownames(abu_table) <- tax_table$Genus_species
+
+total_counts <- rowSums(abu_table)
+top_organisms <- sort(total_counts, decreasing = TRUE)
+top_organisms <- head(top_organisms, n = 15)
+
+top_organisms
+
+# Calculate the percentage of the top 15 organisms
+print("Percentage of top 15 organisms:")
+top_organisms/sum(rowSums(abu_table))*100
+```
+
+Bacteria with clinical relevance
+
+```{r}
+
+species_abundance <- data.frame(
+    Species = c(
+        "Klebsiella_pneumoniae", "Klebsiella_huaxiensis",
+        "Acinetobacter_baumannii", "Acinetobacter_johnsonii",
+        "Pseudomonas_aeruginosa", "Pseudomonas_alcaligenes",
+        "Escherichia_coli", "Citrobacter_freundii",
+        "Citrobacter_portucalensis", "Citrobacter_braakii",
+        "Aeromonas_caviae", "Aeromonas_dhakensis",
+        "Aeromonas_veronii", "Enterobacter_cloacae",
+        "Enterococcus_faecium", "Staphylococcus_aureus"
+    )
+)
+
+# Calculate total counts and relative abundance
+species_abundance$Total_Counts <- sapply(species_abundance$Species, 
+    function(x) sum(total_counts[x]))
+species_abundance$Relative_Abundance <- species_abundance$Total_Counts / 
+    sum(rowSums(abu_table)) * 100
+
+# Round relative abundance to 2 decimal places
+species_abundance$Relative_Abundance <- round(species_abundance$Relative_Abundance, 2)
+
+
+species_abundance
+```
+
+show genera counts
+
+```{r}
+
+abu_table <- as.data.frame(otu_table(ps_bact_filtered_genus))
+tax_table <- as.data.frame(tax_table(ps_bact_filtered_genus))
+species_names <- tax_table$Genus
+rownames(abu_table) <- tax_table$Genus
+
+total_counts <- rowSums(abu_table)
+
+
+species_abundance <- data.frame(
+    Species = c(
+        "Klebsiella", "Acinetobacter",
+        "Pseudomonas", "Escherichia",
+        "Citrobacter", "Aeromonas",
+        "Enterobacter"
+    )
+)
+
+# Calculate total counts and relative abundance
+species_abundance$Total_Counts <- sapply(species_abundance$Species, 
+    function(x) sum(total_counts[x]))
+species_abundance$Relative_Abundance <- species_abundance$Total_Counts / 
+    sum(rowSums(abu_table)) * 100
+
+# Round relative abundance to 2 decimal places
+species_abundance$Relative_Abundance <- round(species_abundance$Relative_Abundance, 2)
+
+species_abundance
+
+```
+
+## ARG abundance
+
+Read data
+
+```{r, read_amr}
+ARG_SCAFFOLDS_F = "../Resistance_genes/AMR_genes_RGI_scaffolds_filtered.csv"
+arg_t <- read.csv(ARG_SCAFFOLDS_F, header = TRUE, row.names = 1)
+
+
+tax_t <- data.frame(Tax = rownames(arg_t), ARG = rownames(arg_t))
+  # tax_t <- sanitizeRowNames(tax_t)
+rownames(tax_t) <- tax_t$Tax
+
+ARG_TAX <- tax_table(as.matrix(tax_t[, c('Tax', 'ARG')]))
+
+ps_amr <- phyloseq(otu_table(arg_t, taxa_are_rows = TRUE), sample_data(metadata), ARG_TAX)
+
+# Fix Sample names
+# Create a named vector for mapping
+name_mapping <- setNames(metadata$Sample, rownames(metadata))
+
+# Use the mapping to rename the columns
+sample_names(ps_amr) <- name_mapping[sample_names(ps_amr)]
+
+```
+
+```{r, plot_amr}
+barplot(sample_sums(ps_amr), las = 2)
+
+plot_bar(ps_amr, fill = "City")
+
+options(repr.plot.width=4, repr.plot.height=4)
+hist(log10(sample_sums(ps_amr)), breaks=50, main="Sample size distribution", xlab="Sample size (log10)", ylab="Frequency", col="#007c80")
+
+```
+### Filtering 
+
+Since we removed some samples from bactrial anlysis, we have to remove them also here.    
+
+```{r}
+ps_amr_good = subset_samples(ps_amr, sample_data(ps_amr)$Sample != "Salaspils.2")
+ps_amr_good = subset_samples(ps_amr_good, sample_data(ps_amr_good)$Sample != "Talsi.3")
+
+hist(log10(sample_sums(ps_amr_good)), breaks=50, main="Sample size distribution", xlab="Sample size (log10)", ylab="Frequency", col="#007c80")
+```
+
+
+```{r, filter_amr}
+# Less strict filterring option
+# remove singletons. 
+ps_scaffolds_filtered = filter_taxa(ps_amr_good, function(x) sum(x) > 1, prune=TRUE)
+
+
+max_difference = max(sample_sums(ps_scaffolds_filtered))/min(sample_sums(ps_scaffolds_filtered))
+sprintf("The max difference in sequencing depth is %s", max_difference)
+
+```
+
+```{r, amr_deapth}
+boxplot(sample_sums(ps_scaffolds_filtered), main="Sequencing depth across samples removed singletons", xlab="", ylab="Number of reads", col="#a6093d")
+text(y=boxplot.stats(sample_sums(ps_scaffolds_filtered))$stats, labels=boxplot.stats(sample_sums(ps_scaffolds_filtered))$stats, x=1.25)
+```
+
+```{r}
+# Convert the filtered OTU table to a data frame
+data_otu_filt = data.frame(otu_table(ps_scaffolds_filtered))
+
+# Print the dimensions of the filtered data
+print("Phyloseq ARG scaffolds after filtering")
+dim(data_otu_filt)
+
+# Print the total sequence count after filtering
+print("Filtered sequence count")
+sum(data_otu_filt)
+```
+
+
+```{r}
+# Calculate and print the percentage of sequences dropped from the original dataset
+original_seq_count = sum(data.frame(otu_table(ps_amr_good)))
+filtered_seq_count = sum(data_otu_filt)
+seq_dropped_percentage = ((original_seq_count - filtered_seq_count) / original_seq_count) * 100
+
+
+
+print("Sequence % dropped from the dataset:")
+seq_dropped_percentage
+```
+
+
+
+```{r}
+ps_scaffolds_filtered %>%
+    ps_mutate(Group = factor(sample_data(ps_scaffolds_filtered)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(sample_data(ps_scaffolds_filtered)[order(sample_data(ps_scaffolds_filtered)$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+```
+
+### CARD DB gene anotations
+
+Using CARD DB to create tables of AMR groups
+
+```{r, load_card}
+
+source("~/ARG_waste_water/src/comperative_metagen_definitions.r")
+
+card_tax_t <- NA
+card_tax_t <- process_card_data(arg_t)
+
+#
+# SEPERATE DRUG CLASSES INTO INDIVIDUAL NAMES
+#
+
+# Assuming tax_t is your data frame and DrugClass is the column of interest
+unique_drug_classes <- card_tax_t %>%
+  # Separate the DrugClass column into rows by splitting on ";"
+  separate_rows(DrugClass, sep = ";") %>%
+  # Select unique DrugClass names
+  distinct(DrugClass) %>%
+  # Pull the DrugClass column to get a vector of unique drug class names
+  pull(DrugClass)
+
+#unique_drug_classes
+
+
+unique_amr_families <- card_tax_t %>%
+  # Separate the DrugClass column into rows by splitting on ";"
+  separate_rows(AMRGeneFamily, sep = ";") %>%
+  # Select unique DrugClass names
+  distinct(AMRGeneFamily) %>%
+  # Pull the DrugClass column to get a vector of unique drug class names
+  pull(AMRGeneFamily)
+
+#unique_amr_families
+
+unique_amr_categories <- card_tax_t %>%
+  # Separate the DrugClass column into rows by splitting on ";"
+  separate_rows(AntibioticCategory, sep = ";") %>%
+  # Select unique DrugClass names
+  distinct(AntibioticCategory) %>%
+  # Pull the DrugClass column to get a vector of unique drug class names
+  pull(AntibioticCategory)
+
+#unique_amr_categories
+```
+
+Create Objects for AMR categories.
+
+```{r}
+drug_class_counts <- create_drug_class_counts(arg_t, card_tax_t, unique_drug_classes)
+
+# Create the AMR families counts
+amr_families_counts <- create_amr_families_counts(arg_t, card_tax_t, unique_amr_families)
+
+# Create the AMR categories counts
+amr_categories_counts <- create_amr_categories_counts(arg_t, card_tax_t, unique_amr_categories)
+
+# Create the taxonomy table
+tax_t_drugs <- create_taxonomy_table(card_tax_t)
+
+physeq_drug_class <- createPhyloseqObject(drug_class_counts, METADATA_PATH)
+physeq_amr_families <- createPhyloseqObject(amr_families_counts, METADATA_PATH)
+physeq_amr_categories <- createPhyloseqObject(amr_categories_counts, METADATA_PATH)
+```
+
+Creates tax plots.
+
+```{r}
+
+physeq_amr_categories %>%
+    ps_mutate(Group = factor(sample_data(physeq_amr_categories)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+```
+
+
+```{r}
+physeq_drug_class %>%
+    ps_mutate(Group = factor(sample_data(physeq_drug_class)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+```
+
+```{r}
+physeq_amr_families %>%
+    ps_mutate(Group = factor(sample_data(physeq_amr_families)$City)) %>%
+    tax_agg("ARG") %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "ARG", 
+                 sample_order = rownames(metadata[order(metadata$Sample), ]), 
+                 n_taxa = 10, 
+                 label = "Sample", interactive = TRUE) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+```
+
+
+
+
+Show gene distribution
+
+```{r}
+
+GP1 = transform_sample_counts(ps_scaffolds_filtered, function(x) 1E6 * x/sum(x))
+
+arg.sum = tapply(taxa_sums(GP1), tax_table(GP1)[, "ARG"], sum, na.rm=TRUE)
+top10args = names(sort(arg.sum, TRUE))[1:10]
+GP1 = prune_taxa((tax_table(GP1)[, "ARG"] %in% top10args), GP1)
+
+GP.ord <- ordinate(GP1, "NMDS", "bray")
+GP.ord2 <- ordinate(ps_scaffolds_filtered, "NMDS", "bray")
+
+plot_ordination(GP1, GP.ord2, type="taxa", color = "ARG", title="ARGs") + theme(legend.position = "bottom")
+
+```
+
+
+### Normalization
+
+
+Normalization by subsampling (rarefaction)
+
+```{r}
+tab <- otu_table(ps_scaffolds_filtered)
+class(tab) <- "matrix"
+tab <- t(tab)
+
+rare <- rarecurve(tab, step=10, lwd=2, ylab="OTU",  label=F)
+rare
+```
+
+
+```{r}
+
+df=as.data.frame(sample_sums(ps_scaffolds_filtered))
+head(df[order( df[,1] ),],1)
+
+ps_amr_rare = rarefy_even_depth(ps_scaffolds_filtered, sample.size=820, replace=FALSE, rngseed=123, verbose=FALSE)
+
+```
+
+
+
+Normalization by cumulative sum scaling (CSS)
+
+```{r}
+ps_amr_CSS = microbiomeMarker::normalize(ps_scaffolds_filtered, method="CSS")
+```
+
+### Most abundant genes
+
+Show Top 15 most abundant genes
+
+```{r}
+abu_table <- as.data.frame(otu_table(ps_scaffolds_filtered))
+tax_table <- as.data.frame(tax_table(ps_scaffolds_filtered))
+rownames(abu_table) <- tax_table$ARG
+
+total_counts <- rowSums(abu_table)
+top_organisms <- sort(total_counts, decreasing = TRUE)
+top_organisms <- head(top_organisms, n = 15)
+
+top_organisms
+
+# Calculate the percentage of the top 15 organisms
+print("Percentage of top 15 organisms:")
+top_organisms/sum(rowSums(abu_table))*100
+```
+
+
+```{r}
+abu_table <- as.data.frame(otu_table(physeq_drug_class))
+tax_table <- as.data.frame(tax_table(physeq_drug_class))
+rownames(abu_table) <- tax_table$ARG
+
+total_counts <- rowSums(abu_table)
+top_organisms <- sort(total_counts, decreasing = TRUE)
+top_organisms <- head(top_organisms, n = 15)
+
+top_organisms
+
+# Calculate the percentage of the top 15 organisms
+print("Percentage of top 15 organisms:")
+top_organisms/sum(rowSums(abu_table))*100
+```
+
+
+
+
+```{r}
+abu_table <- as.data.frame(otu_table(physeq_amr_families))
+tax_table <- as.data.frame(tax_table(physeq_amr_families))
+rownames(abu_table) <- tax_table$ARG
+
+total_counts <- rowSums(abu_table)
+top_organisms <- sort(total_counts, decreasing = TRUE)
+top_organisms <- head(top_organisms, n = 15)
+
+top_organisms
+
+# Calculate the percentage of the top 15 organisms
+print("Percentage of top 15 organisms:")
+top_organisms/sum(rowSums(abu_table))*100
+```
+
+```{r}
+abu_table <- as.data.frame(otu_table(physeq_amr_categories))
+tax_table <- as.data.frame(tax_table(physeq_amr_categories))
+rownames(abu_table) <- tax_table$ARG
+
+total_counts <- rowSums(abu_table)
+top_organisms <- sort(total_counts, decreasing = TRUE)
+top_organisms <- head(top_organisms, n = 15)
+
+top_organisms
+
+# Calculate the percentage of the top 15 organisms
+print("Percentage of top 15 organisms:")
+top_organisms/sum(rowSums(abu_table))*100
+```
+
+## City
+
+### Bacteria
+
+#### Alpha Diversity
+
+```{r}
+#alpha diversity boxplot graph
+
+plot_richness(ps_bact_filtered, x = "City",
+              measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") + 
+              geom_boxplot() + geom_point(size=1, alpha=0.5)
+
+```
+
+Kruskal Test
+
+```{r, fig.width=9, fig.height=5, text.width=10}
+alpha_indexes_bact <- estimate_richness(ps_bact_filtered, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+
+kruskal.test(alpha_indexes_bact$Shannon ~ sample_data(ps_bact_filtered)$City)
+kruskal.test(alpha_indexes_bact$InvSimpson ~ sample_data(ps_bact_filtered)$City)
+
+```
+
+
+```{r}
+min(alpha_indexes_bact$InvSimpson)
+max(alpha_indexes_bact$InvSimpson)
+min(alpha_indexes_bact$Shannon)
+max(alpha_indexes_bact$Shannon)
+```
+
+Dunes Test 
+
+pinpoint which specific means are significant from the others
+
+```{r}
+library(dunn.test)
+dunn_results <- dunn.test(alpha_indexes_bact$InvSimpson, 
+          sample_data(ps_bact_filtered)$City, 
+          method="bh")
+```
+
+```{r}
+dunn_results$P.adjusted[dunn_results$P.adjusted < 0.05]
+dunn_results$chi2
+dunn_results$Z[dunn_results$P.adjusted < 0.05]
+dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
+```
+
+
+#### Beta Diversity
+
+```{r}
+theme_set(theme_bw())
+
+#https://joey711.github.io/phyloseq/plot_ordination-examples.html
+
+GP.ord <- ordinate(ps_CSS, "NMDS", "bray")
+GP.ord
+p1 = plot_ordination(ps_CSS, GP.ord, type="Sample", color="City")
+```
+
+```{r}
+p1 + geom_point(size=3)+
+  geom_polygon(aes(fill=City), alpha = 1/2)
+```
+
+
+```{r}
+tax_bray <- phyloseq::distance(ps_CSS, method = "bray")
+```
+
+
+
+```{r}
+
+anosim(tax_bray, sample_data(ps_CSS)$City, distance = "bray", permutations = 999)
+
+```
+
+
+```{r}
+
+adonis2_rez<-adonis2(tax_bray ~ sample_data(ps_CSS)$City)
+print(adonis2_rez)
+```
+
+beta dispersion
+
+```{r}
+beta <- betadisper(tax_bray, sample_data(ps_CSS)$City)
+print("BETADISPER")
+print("City")
+print(anova(beta))
+plot(beta)
+
+```
+
+
+### ARG
+
+#### Alpha diversity
+
+```{r}
+
+plot_richness(ps_scaffolds_filtered, x="City", color="City", title="AMR diversity", measures=c("InvSimpson", "Observed", "Shannon", "Chao1"), nrow = 2, sortby = "Shannon") + 
+    geom_boxplot() + 
+    theme_bw() +
+    labs(x='', color = "City")+
+    theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+Calculate distance
+
+
+```{r, fig.width=9, fig.height=5, text.width=10}
+alpha_indexes_bact <- estimate_richness(ps_scaffolds_filtered, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+
+kruskal.test(alpha_indexes_bact$Shannon ~ sample_data(ps_scaffolds_filtered)$City)
+kruskal.test(alpha_indexes_bact$InvSimpson ~ sample_data(ps_scaffolds_filtered)$City)
+
+```
+
+
+```{r}
+min(alpha_indexes_bact$InvSimpson)
+max(alpha_indexes_bact$InvSimpson)
+min(alpha_indexes_bact$Shannon)
+max(alpha_indexes_bact$Shannon)
+```
+
+Dunes Test 
+
+pinpoint which specific means are significant from the others
+
+```{r}
+library(dunn.test)
+dunn_results <- dunn.test(alpha_indexes_bact$Shannon, 
+          sample_data(ps_scaffolds_filtered)$City, 
+          method="bh")
+```
+
+```{r}
+dunn_results$P.adjusted[dunn_results$P.adjusted < 0.05]
+dunn_results$chi2
+dunn_results$Z[dunn_results$P.adjusted < 0.05]
+dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
+```
+
+
+#### Beta diversity
+
+```{r}
+GP.ord2 <- ordinate(ps_amr_CSS, "NMDS", "bray")
+p1 = plot_ordination(ps_amr_CSS, GP.ord2, type="samples", color = "City", title="City bray-distance NMDS")+
+ geom_polygon(aes(fill=City), alpha = 1/2) + geom_point(size=3)
+
+print(p1)
+```
+
+
+## Hospital
+
+```{r}
+plot_richness(ps_bact_filtered, x = "Regional_Hospital",
+              measures=c("Shannon", "Simpson"), nrow = 2, sortby = "Shannon") + 
+              geom_boxplot() + geom_point(size=1, alpha=0.5)
+plot_richness(ps_bact_filtered, x = "Hospital_Type",
+              measures=c("Shannon", "Simpson"), nrow = 2, sortby = "Shannon") + 
+              geom_boxplot() + geom_point(size=1, alpha=0.5)
+```
+
+```{r}
+kruskal.test(alpha_indexes_bact$Shannon ~ sample_data(ps_bact_filtered)$Regional_Hospital)
+kruskal.test(alpha_indexes_bact$Shannon ~ sample_data(ps_bact_filtered)$Hospital_Type)
+```
+
+```{r}
+wilcox.test(alpha_indexes_bact$Shannon~sample_data(ps_bact_filtered)$Regional_Hospital,
+                     p.adjust.method = "BH")
+
+```
+```{r}
+pairwise.wilcox.test(alpha_indexes_bact$Shannon,sample_data(ps_bact_filtered)$Hospital_Type,
+                     p.adjust.method = "BH")
+```
+
+
+
+## Industr
+
+```{r}
+
+```
+
+

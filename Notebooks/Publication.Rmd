@@ -194,7 +194,7 @@ ps_rare = rarefy_even_depth(ps_bact_filtered, sample.size=5010685, replace=FALSE
 Normalization by cumulative sum scaling (CSS)
 
 ```{r}
-ps_CSS = normalize(ps_bact_filtered, method="CSS")
+ps_CSS =  microbiomeMarker::normalize(ps_bact_filtered, method="CSS")
 ```
 
 
@@ -830,19 +830,19 @@ Calculate distance
 
 
 ```{r, fig.width=9, fig.height=5, text.width=10}
-alpha_indexes_bact <- estimate_richness(ps_scaffolds_filtered, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+alpha_indexes_amr <- estimate_richness(ps_scaffolds_filtered, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
 
-kruskal.test(alpha_indexes_bact$Shannon ~ sample_data(ps_scaffolds_filtered)$City)
-kruskal.test(alpha_indexes_bact$InvSimpson ~ sample_data(ps_scaffolds_filtered)$City)
+kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_scaffolds_filtered)$City)
+kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_scaffolds_filtered)$City)
 
 ```
 
 
 ```{r}
-min(alpha_indexes_bact$InvSimpson)
-max(alpha_indexes_bact$InvSimpson)
-min(alpha_indexes_bact$Shannon)
-max(alpha_indexes_bact$Shannon)
+min(alpha_indexes_amr$InvSimpson)
+max(alpha_indexes_amr$InvSimpson)
+min(alpha_indexes_amr$Shannon)
+max(alpha_indexes_amr$Shannon)
 ```
 
 Dunes Test 
@@ -851,7 +851,7 @@ pinpoint which specific means are significant from the others
 
 ```{r}
 library(dunn.test)
-dunn_results <- dunn.test(alpha_indexes_bact$Shannon, 
+dunn_results <- dunn.test(alpha_indexes_amr$Shannon, 
           sample_data(ps_scaffolds_filtered)$City, 
           method="bh")
 ```
@@ -874,39 +874,392 @@ p1 = plot_ordination(ps_amr_CSS, GP.ord2, type="samples", color = "City", title=
 print(p1)
 ```
 
+```{r}
+tax_bray_amr <- phyloseq::distance(ps_amr_CSS, method = "bray")
+```
+
+
+
+```{r}
+
+anosim(tax_bray_amr, sample_data(ps_amr_CSS)$City, distance = "bray", permutations = 999)
+
+```
+
+
+```{r}
+
+adonis2_rez<-adonis2(tax_bray_amr ~ sample_data(ps_amr_CSS)$City)
+print(adonis2_rez)
+```
+
+beta dispersion
+
+```{r}
+beta <- betadisper(tax_bray_amr, sample_data(ps_amr_CSS)$City)
+print("BETADISPER")
+print("City")
+print(anova(beta))
+plot(beta)
+
+```
+### Population Size
+
+
+```{r, fig.width=9, fig.height=5, text.width=10}
+
+kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_scaffolds_filtered)$Population)
+kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_scaffolds_filtered)$Population)
+
+```
+
+```{r}
+plot_richness(ps_scaffolds_filtered, x="Population", color="Population", title="AMR diversity", measures=c("InvSimpson", "Observed", "Shannon", "Chao1"), nrow = 2, sortby = "Shannon") + 
+    geom_boxplot() + 
+    theme_bw() +
+    labs(x='', color = "Population")+
+    theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+ps_scaffolds_filtered %>%
+  dist_calc(dist = "bray", binary = TRUE) %>%
+  ord_calc("NMDS") %>%
+  ord_plot(
+    color = "Population", 
+    shape = "City", 
+    size = 4,
+    alpha = 0.8
+  ) +
+  scale_shape_manual(values = c(16, 17, 18, 15, 19, 25, 8, 13, 1, 2, 3, 4, 5, 6, 7)) + # Manual shapes for all hospital types
+  stat_ellipse(aes(linetype = Population, colour = Population)) +
+  theme_bw() +
+  ggside::geom_ysideboxplot(aes(fill = Population, x = Population), 
+                           orientation = "x",
+                           na.rm = TRUE) +
+  ggside::theme_ggside_void() +
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  labs(
+    title = "NMDS of Population Profiles",
+    x = "NMDS1",
+    y = "NMDS2"
+  )
+
+
+adonis2_rez<-adonis2(tax_bray_amr ~ sample_data(ps_amr_CSS)$Population)
+print(adonis2_rez)
+
+beta <- betadisper(tax_bray_amr, sample_data(ps_amr_CSS)$Population)
+print("BETADISPER")
+print("Population")
+print(anova(beta))
+plot(beta)
+```
 
 ## Hospital
 
-```{r}
-plot_richness(ps_bact_filtered, x = "Regional_Hospital",
-              measures=c("Shannon", "Simpson"), nrow = 2, sortby = "Shannon") + 
-              geom_boxplot() + geom_point(size=1, alpha=0.5)
-plot_richness(ps_bact_filtered, x = "Hospital_Type",
-              measures=c("Shannon", "Simpson"), nrow = 2, sortby = "Shannon") + 
-              geom_boxplot() + geom_point(size=1, alpha=0.5)
-```
+No significance in Regional Hospital.
 
 ```{r}
-kruskal.test(alpha_indexes_bact$Shannon ~ sample_data(ps_bact_filtered)$Regional_Hospital)
-kruskal.test(alpha_indexes_bact$Shannon ~ sample_data(ps_bact_filtered)$Hospital_Type)
-```
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Regional_Hospital,
+                     p.adjust.method = "BH")
 
-```{r}
-wilcox.test(alpha_indexes_bact$Shannon~sample_data(ps_bact_filtered)$Regional_Hospital,
+wilcox.test(alpha_indexes_bact$InvSimpson~sample_data(ps_scaffolds_filtered)$Regional_Hospital,
                      p.adjust.method = "BH")
 
 ```
+
+Hospital Types
+
+
 ```{r}
-pairwise.wilcox.test(alpha_indexes_bact$Shannon,sample_data(ps_bact_filtered)$Hospital_Type,
-                     p.adjust.method = "BH")
+kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_scaffolds_filtered)$Hospital_Type)
+kruskal.test(alpha_indexes_bact$Shannon ~ sample_data(ps_bact_filtered_species)$Hospital_Type)
+```
+
+```{r}
+
+plot_richness(ps_scaffolds_filtered, x = "Hospital_Type",
+              measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") + 
+              geom_boxplot() + geom_point(size=1, alpha=0.5)  + labs(
+    title = "AMR Hospital type diversity")
+
+plot_richness(ps_bact_filtered_species, x = "Hospital_Type",
+              measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") + 
+              geom_boxplot() + geom_point(size=1, alpha=0.5)   + labs(
+    title = "Species Hospital type diversity")
 ```
 
 
+```{r}
+GP.ord2 <- ordinate(ps_amr_CSS, "NMDS", "bray")
+p1 = plot_ordination(ps_amr_CSS, GP.ord2, type="samples", color = "Hospital_Type", title="Hospital_Type bray-distance NMDS")+
+ stat_ellipse(aes(linetype = Regional_Hospital, colour = Regional_Hospital)) + geom_point(size=3)
+
+print(p1)
+
+adonis2_rez<-adonis2(tax_bray_amr ~ sample_data(ps_amr_CSS)$Hospital_Type)
+print(adonis2_rez)
+
+beta <- betadisper(tax_bray_amr, sample_data(ps_amr_CSS)$Hospital_Type)
+print("BETADISPER")
+print("Hospital_Type")
+print(anova(beta))
+plot(beta)
+```
+
+```{r}
+
+dunn_results <- dunn.test(alpha_indexes_amr$Shannon, 
+          sample_data(ps_scaffolds_filtered)$Hospital_Type, 
+          method="bh")
+
+dunn_results$P.adjusted[dunn_results$P.adjusted < 0.05]
+dunn_results$chi2
+dunn_results$Z[dunn_results$P.adjusted < 0.05]
+dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
+```
+
+
+```{r}
+
+dunn_results <- dunn.test(alpha_indexes_bact$Shannon, 
+          sample_data(ps_bact_filtered_species)$Hospital_Type, 
+          method="bh")
+
+dunn_results$P.adjusted[dunn_results$P.adjusted < 0.05]
+dunn_results$chi2
+dunn_results$Z[dunn_results$P.adjusted < 0.05]
+dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
+```
+
+
+#### SIAMCAT
+
+```{r, tax_glom}
+library(SIAMCAT)
+relab_ps = transform_sample_counts(ps_scaffolds_filtered, function(x) x/sum(x))
+
+psglom = tax_glom(relab_ps, "ARG")
+```
+
+```{r}
+create_siamcat_plot <- function(psg, label_column, case_value, output_prefix) {
+  # Create label
+  sc_label <- create.label(meta=sample_data(psg), label=label_column, case=case_value)
+  
+  # Create SIAMCAT object
+  siamcat_o <- siamcat(phyloseq=psg, label=sc_label)
+  
+  
+  # Filter features
+  siamcat_o <- filter.features(siamcat_o, filter.method='abundance', cutoff=1e-03)
+  siamcat_o <- filter.features(siamcat_o, filter.method='prevalence', cutoff=0.05, feature.type='filtered')
+  
+  # Check associations
+  siamcat_o <- check.associations(siamcat_o)
+  
+  association.plot(siamcat_o, panels=c("fc", "prevalence"), prompt = FALSE, verbose = 0)
+  # Final association plot
+  svg(paste0("../plots/",output_prefix, "_final_association.svg"), width=12, height=7)
+  association.plot(siamcat_o, panels=c("fc", "prevalence"), prompt = FALSE, verbose = 0)
+  dev.off()
+  cat("plot saved to", paste0(output_prefix, "_final_association.svg"), "\n")
+  
+  return(siamcat_o)
+}
+
+```
+
+
+```{r, assoc_hosp}
+label_case_pairs <- list(
+  list(label = "Hospital_Type", case = "0"),
+  list(label = "Hospital_Type", case = "2"),
+  list(label = "Hospital_Type", case = "3"),
+  list(label = "Hospital_Type", case = "4"),
+  list(label = "Hospital_Type", case = "Specilised"),
+  list(label = "Hospital_Type", case = "Other"),
+  list(label = "Hospital_Type", case = "Red_cross"),
+  list(label = "Hospital_Type", case = "Branch")
+  # Add more pairs as needed
+)
+
+#psglom = tax_glom(relab_ps, "ARG")
+
+# Loop through the pairs
+for (pair in label_case_pairs) {
+  label_column <- pair$label
+  case_value <- pair$case
+  
+  # Create a unique output prefix for each pair
+  output_prefix <- paste0("siamcat_", label_column, "_", case_value)
+  
+  # Run the function
+  siamcat_result <- create_siamcat_plot(psglom, label_column, case_value, output_prefix)
+  
+  # You can do additional processing with siamcat_result here if needed
+  
+  volcano.plot(siamcat_result)
+  print(rownames(associations(siamcat_result))[associations(siamcat_result)$p.adj<0.05])
+  # Print a message to indicate progress
+  cat("Completed processing for", label_column, "with case", case_value, "\n")
+}
+```
 
 ## Industr
 
+### AMR
+
+
 ```{r}
+colnames(sample_data(ps_amr_CSS))[7:12]
+```
+
+
+```{r, PERMANOVA}
+
+ps_amr_ww_impact = subset_samples(ps_scaffolds_filtered, sample_data(ps_scaffolds_filtered)$Industrial_wastewater_impact != "Na")
+
+alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+
+
+
+kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact)
+
+
+dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon, 
+          sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact, 
+          method="bh")
+
 
 ```
 
 
+```{r}
+ps_amr_ww_impact = subset_samples(ps_scaffolds_filtered, sample_data(ps_scaffolds_filtered)$Industrial_wastewater_impact_from_food != "Na")
+
+alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+
+
+
+kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
+
+
+dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon, 
+          sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food, 
+          method="bh")
+```
+
+
+
+```{r}
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Dairy_farming, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Meat_production, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Metal_processing, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Washrooms, p.adjust.method = "BH")
+```
+
+
+```{r, PERMANOVA}
+
+# Microbial Community Diversity Analysis Tutorial with Phyloseq
+# Permanova
+# https://deneflab.github.io/MicrobeMiseq/demos/mothur_2_phyloseq.html
+
+metadata_col = colnames(sample_data(ps_amr_CSS))[7:12]
+# PERMANOVA test
+
+for (param in metadata_col){
+# Using Bray-Curtis distance by default
+if (param == "norm_factor" || param == "Sample" || param == "Date"){
+    next
+}
+
+print(param)
+formula_str <- paste("tax_bray_amr ~", param)  
+adonis2_rez<-adonis2(as.formula(formula_str), data = data.frame(sample_data(ps_amr_CSS)))
+
+# View results
+print(adonis2_rez)
+
+}
+
+```
+
+### Taxonomy
+
+
+```{r, PERMANOVA}
+
+ps_amr_ww_impact = subset_samples(ps_bact_filtered, sample_data(ps_bact_filtered)$Industrial_wastewater_impact != "Na")
+
+alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+
+
+
+kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact)
+
+
+dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon, 
+          sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact, 
+          method="bh")
+
+
+```
+
+
+```{r}
+ps_amr_ww_impact = subset_samples(ps_bact_filtered, sample_data(ps_bact_filtered)$Industrial_wastewater_impact_from_food != "Na")
+
+alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+
+
+
+kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
+
+
+dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon, 
+          sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food, 
+          method="bh")
+```
+
+```{r}
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_bact_filtered)$Dairy_farming, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_bact_filtered)$Meat_production, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_bact_filtered)$Metal_processing, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_bact_filtered)$Washrooms, p.adjust.method = "BH")
+```
+
+```{r, PERMANOVA}
+
+# Microbial Community Diversity Analysis Tutorial with Phyloseq
+# Permanova
+# https://deneflab.github.io/MicrobeMiseq/demos/mothur_2_phyloseq.html
+
+metadata_col = colnames(sample_data(ps_CSS))[7:12]
+# PERMANOVA test
+
+for (param in metadata_col){
+# Using Bray-Curtis distance by default
+if (param == "norm_factor" || param == "Sample" || param == "Date"){
+    next
+}
+
+print(param)
+formula_str <- paste("tax_bray ~", param)  
+adonis2_rez<-adonis2(as.formula(formula_str), data = data.frame(sample_data(ps_CSS)))
+
+# View results
+print(adonis2_rez)
+
+}
+
+```

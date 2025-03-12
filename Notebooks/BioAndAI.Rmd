@@ -1,0 +1,329 @@
+Data anlysis for EMBL BIO and AI synopsium
+
+```{r}
+library(ggplot2)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+```
+
+
+## Data
+
+### ggplot2
+
+```{r}
+
+# Create the data frame with all locations
+resistome_data <- data.frame(
+  lon = c(24.3583, 23.1556, 26.21698, 21.0174, 25.4283, 24.8594, 22.6014, 
+          22.4931, 23.2769, 25.90164, 25.2675, 23.71278, 23.77038, 21.9833, 21.5600),
+  lat = c(56.8619, 56.9675, 56.85329, 56.5189, 57.5417, 57.1547, 57.2464, 
+          56.6667, 56.6231, 57.42444, 57.3122, 56.65, 56.968, 56.9750, 57.3892),
+  City = c("Salaspils", "Tukums", "Madona", "Liepāja", "Valmiera", "Sigulda", 
+           "Talsi", "Saldus", "Dobele", "Smiltene", "Cesis", "Jelgava", 
+           "Jurmala", "Kuldiga", "Ventspils"),
+  Population = c("Salaspils: 19000", "Tukums: 16000", "Madona: 8000", "Liepāja: 74000", "Valmiera: 25000", "Sigulda: 13000", "Talsi: 9000",
+                 "Saldus: 11000", "Dobele: 11000", "Smiltene: 5000", "Cesis: 16000", "Jelgava: 49000",
+                 "Jurmala: 43000", "Kuldiga: 10000", "Ventspils: 35000")
+)
+
+# Get Latvia map
+latvia_map <- ne_countries(country = "Latvia", scale = "medium", returnclass = "sf")
+
+# Create the plot
+plot <- ggplot(latvia_map) +
+  annotation_map_tile(zoom=8, type = "osm", cachedir = system.file("rosm.cache", package = "ggspatial"))+
+
+  
+  # Add points scaled by population
+  geom_point(data = resistome_data,
+             aes(x = lon, y = lat, fill = Population),
+             size = 5,
+             color = "#2c3e50", alpha = 0.8) +
+  
+   # Add city labels with adjusted positioning
+   geom_text(data = resistome_data,
+             aes(x = lon + ifelse(City == "Dobele", -0.2, -0.1),
+                 y = lat + -0.07,
+                 label = City),
+             size = 4) +
+  
+   # Add title and caption
+   labs(fill = "Connected Population \nSize") +
+   
+   # Set the map extent
+   coord_sf(xlim = c(20.5, max(resistome_data$lon) + 1.7), ylim = c(55.75, max(resistome_data$lat) + 0.75)) +
+   
+   # Customize the theme
+   theme_minimal() +
+   theme(
+     plot.title = element_text(size = 22, face = "bold"),
+     plot.subtitle = element_text(size = 10),
+     legend.position = "right",
+     legend.title = element_text(size = 14, face = "bold"),
+     legend.text = element_text(size = 12)
+     
+   )
+# Display the plot
+print(plot)
+
+```
+
+```{r}
+# # Save the plot as a high-resolution PNG file
+ggsave("../plots/Sampling_Locations_in_Latvia.png",
+       plot,
+       width = 12.5,
+       height = 8,
+       dpi = 300)
+
+ggsave("../plots/Sampling_Locations_in_Latvia.svg",
+       plot,
+       width = 12.5,
+       height = 8,
+       dpi = 300,
+       device = "svg")
+```
+
+
+
+
+```{r}
+
+
+# Now convert the resistome_data to an sf object
+resistome_sf <- st_as_sf(resistome_data, coords = c("lon", "lat"), crs = st_crs(latvia_map))
+
+ggplot(data = latvia_map) +
+  geom_sf(fill = "white", color = "black") + # Draw the country map
+  geom_sf(data = resistome_sf, aes(color = City), size = 3) + # Overlay resistome data with increased point size
+  theme_minimal() +
+  theme(legend.text = element_text(size = 12)) # Set legend font size to 12
+
+
+ggplot(data = latvia_map) +
+ geom_sf(fill = "white", color = "black") + # Draw the country map
+ # Adjust point size based on population_size from resistome_sf
+ geom_sf(data = resistome_sf, aes(color = City, size = 30))+  # Adjust scaling factor as needed
+  theme_minimal() +
+  theme(
+    legend.text = element_text(size = 16), # legend title heading
+    legend.title = element_text(size = 18), # legend title heading
+    axis.text.x = element_blank(),  # Remove x-axis text
+    axis.text.y = element_blank(),  # Remove y-axis text
+    # remove legend
+    legend.position = "left"  # Move size legend to the bottom
+  ) +
+  scale_size_continuous(guide = guide_none())  # Remove size legend
+
+
+```
+
+```{r}
+# Attempt to get subregion (e.g., state or equivalent) data for Latvia
+#latvia_subregions <- ne_states(country = "Latvia", returnclass = "sf")
+
+
+
+# map for Administratīvās teritorijas – 2021 from https://data.gov.lv/dati/eng/dataset/atr
+latvia_subregions <- st_read("../src/administrativas_teritorijas_2021.geojson")
+plot(latvia_subregions)
+latvia_subregions$NOSAUKUMS
+
+
+# Now convert the resistome_data to an sf object
+resistome_sf <- st_as_sf(resistome_data, coords = c("lon", "lat"), crs = st_crs(latvia_map))
+
+
+
+ggplot() +
+  geom_sf(data = latvia_subregions, fill = NA, color = "gray50") +  # Add subregion borders
+  theme_minimal() +
+  theme(legend.position = "none") 
+
+
+ggplot(data = latvia_subregions) +
+  geom_sf(aes(fill = NOSAUKUMS), color = "gray50") +  # Fill subregion based on name
+  scale_fill_viridis_d(option = "C") +  # Use a color palette from the viridis package
+  theme_minimal() +
+  theme(legend.position = "none")  # Hide legend if not needed
+
+```
+
+
+```{r}
+
+#get abundance data from phyloseq objec
+
+# Calculate city Sum by combining colsums and sample data by sample ID
+# Create a new data frame
+city_sum <- data.frame(Sample = names(colSums(otu_table(physeq_contigs))), Abundance = colSums(otu_table(physeq_contigs)))
+# Add city information
+city_sum$City <- sample_data(physeq_contigs)[match(city_sum$Sample, rownames(sample_data(physeq_contigs))), "City"]$City
+# return sum per city
+aggregate(Abundance ~ City, data = city_sum, FUN = sum)
+
+#
+#
+# chaneg names for cities
+#
+#
+
+# Conversion vector
+conversion_vector <- c(Jelgava = "Jelgavas pilsēta", Jurmala = "Jūrmalas pilsēta", 
+                       Kuldiga = "Kuldīgas novads", Ventspils = "Ventspils pilsēta", 
+                       Salaspils = "Salaspils novads", Tukums = "Tukuma novads", 
+                       Madona = "Madonas novads", Liepāja = "Liepājas pilsēta", 
+                       Valmiera = "Valmieras novads", Sigulda = "Siguldas novads", 
+                       Talsi = "Talsu novads", Saldus = "Saldus novads", 
+                       Dobele = "Dobeles novads", Smiltene = "Smiltenes novads", 
+                       Cesis = "Cēsu novads")
+
+city_sum$City <- conversion_vector[city_sum$City]
+# Check the changes
+print(city_sum$City)
+#
+#
+#
+
+
+# Get country boundary for Latvia
+latvia_map <- ne_countries(country = "Latvia", type = 'countries', scale = "medium", returnclass = "sf")
+
+
+
+# Create a new column 'city_color' to indicate whether a subregion is a city that should be colored
+latvia_subregions$city_color <- ifelse(latvia_subregions$NOSAUKUMS %in% city_sum$City, "City", "Other")
+latvia_subregions$Abundance <- city_sum$Abundance[match(latvia_subregions$NOSAUKUMS, city_sum$City)]
+
+
+
+# Now plot with ggplot, filling by Abundance
+ggplot(data = latvia_subregions) +
+  geom_sf(aes(fill = Abundance), color = "black") +  # Use 'Abundance' for fill color
+  scale_fill_gradient(na.value = "#EEEEEE") + # Use a color gradient for Abundance
+  scale_fill_distiller(palette = "Spectral")+
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    legend.text = element_text(size = 20),
+    legend.title = element_text(size = 24),
+    plot.title = element_text(size = 24, hjust = 0.5), # remove gridlines
+    panel.grid.major = element_blank(),
+) + # Adjust legend position as needed
+ggtitle("ARG Abundance in Latvia")+  # Add a title to the plot
+labs(fill = "ARG count")  # Change the legend title
+```
+
+
+
+### Leaflet
+
+
+```{r map-render, echo=FALSE}
+library(leaflet)
+
+# Assuming you have a vector of unique city names called unique_cities
+unique_cities <- unique(resistome_sf$City)
+
+# Use colorRampPalette to create more colors than a standard palette provides
+city_colors <- colorRampPalette(brewer.pal(8, "Set3"))(length(unique_cities))
+
+# Create a named vector where the names are city names and the values are the colors
+city_color_definitions <- setNames(city_colors, unique_cities)
+
+
+
+
+leaflet(data = resistome_sf) %>%
+  addTiles() %>%
+  addCircleMarkers(~lon, ~lat, color = ~city_color_definitions[City],
+                   label = ~City, # Label for each point
+                   fillOpacity = 0.8, radius = 6) %>%
+  addLayersControl()
+
+# make plot from leaflet 
+labelOptions = labelOptions(textsize = 12, offset = c(0, -10))  # Adjust text size and offset
+
+p <- leaflet(data = resistome_sf) %>%
+  addTiles() %>%
+  addCircleMarkers(~lon, ~lat,
+                  color = ~city_color_definitions[City],
+                  label = ~toupper(City),  # Display city names in uppercase
+                  fillOpacity = 0.8,
+                  radius = 6,
+                  labelOptions = labelOptions(textsize = 14, offset = c(0, -12)),
+) %>%  # Add CSS class for labels (optional)
+  addLayersControl()
+
+p
+```
+
+## Results
+
+### Sensitivity
+
+```{r}
+plot_ARGs <- function(ARG_table, sample_order, plot_title = "ARGs counts") {
+  data_melted <- reshape2::melt(ARG_table, id.vars = "ARG", variable.name = "Sample", value.name = "Counts")
+  
+  # Compute the total count for each ARG and identify the top 10 ARGs
+  arg_totals <- dplyr::group_by(data_melted, ARG) %>%
+    dplyr::summarise(Total = sum(Counts), .groups = 'drop') %>%
+    dplyr::arrange(desc(Total))
+  
+  top_args <- head(arg_totals$ARG, 10)
+  
+  # Replace ARGs not in top 10 with 'other'
+  data_melted$ARG <- ifelse(data_melted$ARG %in% top_args, data_melted$ARG, 'other')
+
+  # Update ARG factor levels based on their total counts (for sorting the legend)
+  data_melted$ARG <- factor(data_melted$ARG, levels = c(top_args, 'other'))
+
+  # Ensure Sample factor levels are in the specified order
+  data_melted$Sample <- factor(data_melted$Sample, levels = sample_order)
+  
+  # Create and print the ggplot
+  ggplot_obj <- ggplot(data_melted, aes(x = Sample, y = Counts, fill = ARG)) +
+    geom_bar(stat = "identity", position = "stack") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5),
+          legend.position = "none") +
+    scale_fill_brewer(palette = "Paired", direction = -1) +
+    labs(x = "Sample", y = "Counts", fill = "ARG", title = plot_title)
+  
+  return(ggplot_obj)
+}
+
+# Get the order of samples based on one of the datasets (or an external order if you have one)
+sample_order <- levels(factor(reshape2::melt(arg_contig_t)$variable))
+
+# Call the function for both datasets using the same sample order
+p1 <- plot_ARGs(arg_contig_t, sample_order, "RGI counts in samples")
+p2 <- plot_ARGs(arg_deep_t, sample_order, "DeepARG counts in samples")
+
+# Combine the plots
+library(gridExtra)
+layout <- rbind(c(1, 1),
+                c(2, 2),
+                c(2, 2))
+
+# Arrange the plots with custom layout
+grid.arrange(p1 + theme(axis.text.x = element_blank()), p2+ theme(axis.text.x = element_blank()), ncol=1)
+
+
+```
+
+
+
+#### Specificity
+
+```{r}
+
+```
+
+### Overlap
+
+### Time and Memory

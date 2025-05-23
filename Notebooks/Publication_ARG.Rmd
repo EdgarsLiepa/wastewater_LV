@@ -1,14 +1,11 @@
 ---
 title: "Wastewater AMR in Latvia"
 author: "Edgars Liepa"
-date: "22/2/2025"
+date: "26/03/2025"
 output:
-  html_document: default
-    toc: true
-    toc_depth: 2
   pdf_document: default
-    toc: true
-    toc_depth: 2
+  toc: true
+  toc_depth: 2
 ---
 
 ```{r, lib, warning=FALSE}
@@ -92,7 +89,7 @@ Now we remove singleton reads that are assigned to genes with only one alligned 
 ```{r, filter_amr}
 # Less strict filterring option
 # remove singletons. 
-ps_scaffolds_filtered = filter_taxa(ps_amr_good, function(x) sum(x) > 1, prune=TRUE)
+ps_scaffolds_filtered = phyloseq::filter_taxa(ps_amr_good, function(x) sum(x) > 1, prune=TRUE)
 
 
 max_difference = max(sample_sums(ps_scaffolds_filtered))/min(sample_sums(ps_scaffolds_filtered))
@@ -398,8 +395,11 @@ ps_amr_CSS = microbiomeMarker::normalize(ps_scaffolds_filtered, method="CSS")
 Show Top 15 most abundant genes and their relative xount
 
 ```{r, top_amr}
-abu_table <- as.data.frame(otu_table(ps_scaffolds_filtered))
-tax_table <- as.data.frame(tax_table(ps_scaffolds_filtered))
+
+genes_transformed  = transform_sample_counts(ps_scaffolds_filtered, function(x) x / sum(x) )
+
+abu_table <- as.data.frame(otu_table(genes_transformed))
+tax_table <- as.data.frame(tax_table(genes_transformed))
 rownames(abu_table) <- tax_table$ARG
 
 total_counts <- rowSums(abu_table)
@@ -408,9 +408,22 @@ top_organisms <- head(top_organisms, n = 15)
 
 top_organisms
 
-# Calculate the percentage of the top 15 organisms
-# Percentage of top 15 organisms:
-top_organisms/sum(rowSums(abu_table))*100
+mean_percentage <- apply(abu_table, 1, mean) * 100
+std_dev <- sqrt(apply(abu_table, 1, var)) * 100
+
+top_genes <- sort(mean_percentage, decreasing = TRUE) %>% head(n = 15) %>% as.data.frame %>% rownames
+
+# Format output with both mean percentage and standard deviation
+formatted_output <- sapply(top_genes, function(gene) {
+  sprintf("%s (%.2f%% +/- %.2f%%)", 
+          gene, 
+          unname(mean_percentage[gene]), 
+          unname(std_dev[gene])
+          )
+})
+
+# Display formatted output
+formatted_output
 ```
 
 
@@ -446,9 +459,6 @@ top_organisms <- head(top_organisms, n = 15)
 
 top_organisms
 
-# Calculate the percentage of the top 15 organisms
-print("Percentage of top 15 organisms:")
-top_organisms/sum(rowSums(abu_table))*100
 ```
 
 Show most commonly affected drug classes.
@@ -464,9 +474,6 @@ top_organisms <- head(top_organisms, n = 15)
 
 top_organisms
 
-# Calculate the percentage of the top 15 organisms
-print("Percentage of top 15 organisms:")
-top_organisms/sum(rowSums(abu_table))*100
 ```
 
 Calculate mean relative abundance and variance
@@ -498,6 +505,10 @@ formatted_output <- sapply(top_arg, function(arg) {
 # Display formatted output
 formatted_output
 
+variance <- apply(abu_table_arg["MCR phosphoethanolamine transferase",], 1, var)
+mean_percentage <- apply(abu_table_arg["MCR phosphoethanolamine transferase",], 1, mean) * 100
+std_dev <- sqrt(apply(abu_table_arg["MCR phosphoethanolamine transferase",], 1, var)) * 100
+
 
 ```
 
@@ -515,7 +526,7 @@ Exploring differences how AMR gene composition is affected by Municipality facto
 
 
 ```{r, plot_div_amr, fig.width=7.2, fig.height=6}
-alph_city <- plot_richness(ps_scaffolds_filtered, x="City", title="AMR diversity", measures=c("InvSimpson", "Shannon"), nrow = 2, sortby = "Shannon") + 
+alph_city <- plot_richness(ps_scaffolds_filtered, x="City", measures=c("InvSimpson", "Shannon"), nrow = 2, sortby = "Shannon") + 
     geom_boxplot() + 
     theme_bw() +
     theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))+
@@ -536,15 +547,14 @@ alph_city
 
 ```{r_ save_div_amr, echo=FALSE}
 # Save as PNG
-ggsave("../plots/arg_alpha_city_2.png", plot = alph_city, width = 7.2, height = 6, units = "in", dpi = 1200)
+ggsave("../plots/arg_alpha_city_2.jpg", plot = alph_city, width = 8, height = 6, units = "in", dpi = 1200)
 
 # Save as SVG
-ggsave("../plots/arg_alpha_city_2.svg", plot = alph_city, width = 7.2, height = 6, units = "in", dpi = 1200)
+ggsave("../plots/arg_alpha_city_2.svg", plot = alph_city, width = 8, height = 6, units = "in", dpi = 1200)
 
 ```
 
 Calculate distance
-
 
 ```{r, fig.width=9, fig.height=5, text.width=10}
 # Calculate diversity indexes
@@ -554,6 +564,19 @@ kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_scaffolds_filtered)$City
 kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_scaffolds_filtered)$City)
 
 ```
+
+```{r, fig.width=9, fig.height=5, text.width=10}
+# Calculate diversity indexes
+alpha_indexes_amr <- estimate_richness(ps_scaffolds_filtered, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+
+kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_scaffolds_filtered)$City)
+kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_scaffolds_filtered)$City)
+
+```
+
+
+
+
 Kruskal-Wallis rank sum test show significant differences in overall AMR diversity (Shannon)
 but dont show significant differences in how specific AMR dominate between cities (InvSimpson).
 
@@ -590,6 +613,19 @@ Shows most significantly different pairs between cities.
 dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
 ```
 
+```{r}
+dunn_results <- dunn.test(alpha_indexes_amr$InvSimpson, 
+          sample_data(ps_scaffolds_filtered)$City, 
+          method="bh")
+```
+
+
+```{r, dune_yo3}
+dunn_results$P.adjusted[dunn_results$P.adjusted < 0.05]
+dunn_results$chi2
+dunn_results$Z[dunn_results$P.adjusted < 0.05]
+dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
+```
 
 #### Beta diversity
 
@@ -739,41 +775,41 @@ kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_scaffolds_filtered)$H
 
 ```{r, richness_h_type, echo=FALSE}
 # used for generating plots
-# r1 <- plot_richness(ps_scaffolds_filtered, x = "Hospital_Type",
-#               measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") + 
-#               geom_boxplot() + geom_point(size=1, alpha=0.5)  + labs(
-#     title = "AMR Hospital type diversity")  +
-#     theme(
-#         axis.text.x = element_text(angle = 90, hjust = 1, size = 18),
-#         axis.ticks.x = element_blank(),
-#         strip.text = element_text(size = 18),
-#         axis.text.y = element_text(size = 18),
-#         title = element_text(size = 22)
-#   ) 
-# 
-# r2 <- plot_richness(ps_bact_filtered_species, x = "Hospital_Type",
-#               measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") + 
-#               geom_boxplot() + geom_point(size=1, alpha=0.5)   + labs(
-#     title = "Species Hospital type diversity")+
-#   theme(
-#         axis.text.x = element_text(angle = 90, hjust = 1, size = 18), # Smaller x-axis text
-#         axis.ticks.x = element_blank(),
-#         axis.text.y = element_text(size = 18),
-#         strip.text = element_text(size = 18),
-#         legend.position = "right",
-#         title = element_text(size = 22)
-#   ) 
-# 
-# 
-# r_plot <- r1 + r2
-# 
-# r_plot
+r1 <- plot_richness(ps_scaffolds_filtered, x = "Hospital_Type",
+              measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") +
+              geom_boxplot() + geom_point(size=1, alpha=0.5)  + labs(
+    title = "AMR Hospital type diversity")  +
+    theme(
+        axis.text.x = element_text(angle = 90, hjust = 1, size = 18),
+        axis.ticks.x = element_blank(),
+        strip.text = element_text(size = 18),
+        axis.text.y = element_text(size = 18),
+        title = element_text(size = 22)
+  )
+
+r2 <- plot_richness(ps_bact_filtered_species, x = "Hospital_Type",
+              measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") +
+              geom_boxplot() + geom_point(size=1, alpha=0.5)   + labs(
+    title = "Species Hospital type diversity")+
+  theme(
+        axis.text.x = element_text(angle = 90, hjust = 1, size = 18), # Smaller x-axis text
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size = 18),
+        strip.text = element_text(size = 18),
+        legend.position = "right",
+        title = element_text(size = 22)
+  )
+
+
+r_plot <- r1 + r2
+
+r_plot
 ```
 
 ```{r, save_hosp_rich, echo=FALSE}
 
 # # Save as PNG
-# ggsave("../plots/arg_alpha_hospital.png", plot = r_plot, width = 24, height = 12, units = "in", dpi = 300)
+ggsave("../plots/arg_alpha_hospital.jpg", plot = r_plot, width = 24, height = 12, units = "in", dpi = 1200)
 # 
 # # Save as SVG
 # ggsave("../plots/arg_alpha_hospital.svg", plot = r_plot, width = 24, height = 12, units = "in")
@@ -924,11 +960,12 @@ colnames(sample_data(ps_amr_CSS))[7:12]
 
 ```{r, kruskal}
 # remove NA values
-ps_amr_ww_impact = subset_samples(ps_scaffolds_filtered, sample_data(ps_scaffolds_filtered)$Industrial_wastewater_impact != "Na")
+ps_amr_ww_impact = subset_samples(ps_scaffolds_filtered, sample_data(ps_scaffolds_filtered)$Industrial_wastewater_impact != "None")
 
 
 alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
 kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact)
+kruskal.test(alpha_indexes_ww_impact$Simpson ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact)
 ```
 
 
@@ -946,10 +983,11 @@ dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon,
 
 ```{r,kruskal_food}
 # remove NA values
-ps_amr_ww_impact = subset_samples(ps_scaffolds_filtered, sample_data(ps_scaffolds_filtered)$Industrial_wastewater_impact_from_food != "Na")
+ps_amr_ww_impact = subset_samples(ps_scaffolds_filtered, sample_data(ps_scaffolds_filtered)$Industrial_wastewater_impact_from_food != "None")
 
 alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
 kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
+kruskal.test(alpha_indexes_ww_impact$Simpson ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
 ```
 
 Find which pairs are important
@@ -961,7 +999,7 @@ dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon,
 ```
 
 
-#### Binary Factors
+#### Binary Factor alpha diversity
 
 Municipalities were classefied by Dairy_farming, Meat_production, Metal_processing and car washing facilites connected to wastewater system. 
 
@@ -975,6 +1013,15 @@ wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Metal_p
 
 wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Washrooms, p.adjust.method = "BH")
 ```
+```{r, wilcox_sipm}
+wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Dairy_farming, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Meat_production, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Metal_processing, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Washrooms, p.adjust.method = "BH")
+```
 
 ### Beta diversity industry
 
@@ -985,7 +1032,7 @@ wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Washroo
 # https://deneflab.github.io/MicrobeMiseq/demos/mothur_2_phyloseq.html
 
 # remove NAs
-ps_amr_ww_impact = subset_samples(ps_amr_CSS, sample_data(ps_amr_CSS)$Industrial_wastewater_impact != "Na")
+ps_amr_ww_impact = subset_samples(ps_amr_CSS, sample_data(ps_amr_CSS)$Industrial_wastewater_impact != "None")
 tax_bray_ww <- phyloseq::distance(ps_amr_ww_impact, method = "bray")
 
 adonis2_rez<-adonis2(tax_bray_ww ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact)
@@ -998,7 +1045,7 @@ From Food
 
 ```{r, PERMANOVA2}
 # remove NAs
-ps_amr_ww_impact = subset_samples(ps_amr_CSS, sample_data(ps_amr_CSS)$Industrial_wastewater_impact_from_food != "Na")
+ps_amr_ww_impact = subset_samples(ps_amr_CSS, sample_data(ps_amr_CSS)$Industrial_wastewater_impact_from_food != "None")
 
 tax_bray_ww <- phyloseq::distance(ps_amr_ww_impact, method = "bray")
 
@@ -1009,10 +1056,17 @@ print(adonis2_rez)
 metadata_col = colnames(sample_data(ps_amr_CSS))[9:12]
 ```
 
+```{r}
+beta <- betadisper(tax_bray_ww, sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
+print(anova(beta))
+plot(beta)
+```
+
+
 Show rest of the factors.
 
 ```{r, PERMANOVA3}
-
+set.seed(7)
 
 for (param in metadata_col){
 # Using Bray-Curtis distance by default

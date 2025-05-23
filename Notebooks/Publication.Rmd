@@ -3,8 +3,8 @@ title: "Wastewater microbiome in Latvia"
 author: "Edgars Liepa"
 date: "22/2/2025"
 output:
-  html_document: default
   pdf_document: default
+  html_document: default
 ---
 
 Lets start with loading necessary libraries.
@@ -291,6 +291,48 @@ ggsave("../plots/species_all_samples_barplot.png", plot = species_all_samples, w
 ggsave("../plots/species_all_samples_barplot.svg", plot = species_all_samples, width = 12, height = 8, units = "in")
 ```
 
+
+Diagram for publication.
+
+```{r}
+library(cowplot)
+sample_sizes <- log10(sample_sums(merged_metagenomes))
+  
+  # Create the histogram using ggplot2
+p1 <- ggplot(data.frame(size = sample_sizes), aes(x = size)) +
+    geom_histogram(fill = "#007c80", color = "black", bins = 50) +
+    labs(title = "Sample size distribution",
+         x = "Sample size (log10)",
+         y = "Frequency") +
+    theme_classic() +
+    theme(plot.title = element_text(size = 12, face = "bold"),
+          plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"))
+
+
+species_all_samples
+
+
+w_outliers <- plot_grid(
+    p1, species_all_samples,
+    labels = c("a", "b"),
+    label_size = 16,
+    ncol = 2,
+    align = "v",
+    rel_widths = c(0.75, 2)  # Adjust relative heights as needed
+  )
+
+
+```
+
+```{r, save_tax_clean, echo=FALSE}
+# Save as PNG
+ggsave("../plots/w_outliers.jpg", plot = w_outliers, width = 18, height = 8, units = "in", dpi = 1200)
+
+# Save as SVG
+ggsave("../plots/w_outliers.svg", plot = w_outliers, width = 20, height = 8, units = "in")
+```
+
+
 Show aggregated species plot after samples are removed.
 
 Top 20 most abundant genus distribution across municipalities.
@@ -316,7 +358,7 @@ genus_plot
 ```{r, sve_genus plot, echo=FALSE}
 
 # Save as PNG
-ggsave("../plots/city_genus_barplot.png", plot = genus_plot, width = 12, height = 8, units = "in", dpi = 300)
+ggsave("../plots/city_genus_barplot.jpg", plot = genus_plot, width = 12, height = 8, units = "in", dpi = 1200)
 
 # Save as SVG
 ggsave("../plots/city_genus_barplot.svg", plot = genus_plot, width = 12, height = 8, units = "in")
@@ -408,7 +450,7 @@ genus_abundance$std_dev <- sapply(genus_abundance$Genus, function(genus)
 
 # Round relative abundance to 2 decimal places
 genus_abundance$mean_percentage <- round(genus_abundance$mean_percentage, 4)
-genus_abundance$mean_percentage <- round(genus_abundance$mean_percentage, 4)
+genus_abundance$std_dev <- round(genus_abundance$std_dev, 4)
 
 
 genus_abundance
@@ -476,7 +518,7 @@ ggplot(sample_df, aes(x=as.factor(city), y=value))+geom_bar(stat = "identity")+
 print(abu_table["Cloacibacterium",]*100)
 ```
 
-```{r, genus_outliers2, warning=FALSE}
+```{r, genus_outliers3, warning=FALSE}
 # Check outlier cities
 
 print(
@@ -624,7 +666,7 @@ ggplot(sample_df, aes(x=as.factor(city), y=value))+geom_bar(stat = "identity")+
 print(abu_table["Arcobacter_cryaerophilus",]*100)
 ```
 
-```{r, species_outliers2, warning=FALSE}
+```{r, species_outliers3, warning=FALSE}
 sample_df <- data.frame(
   value = as.numeric((abu_table["Cloacibacterium_normanense",]))*100,
   city = colnames(abu_table)
@@ -809,6 +851,20 @@ dunn_results$Z[dunn_results$P.adjusted < 0.05]
 dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
 ```
 
+```{r}
+dunn_results <- dunn.test(alpha_indexes_bact$Shannon, 
+          sample_data(ps_bact_filtered)$City, 
+          method="bh")
+```
+
+```{r}
+dunn_results$P.adjusted[dunn_results$P.adjusted < 0.05]
+dunn_results$chi2
+dunn_results$Z[dunn_results$P.adjusted < 0.05]
+dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
+```
+
+
 ### Beta Diversity
 
 Now we create NMDS Bray–Curtis distance ordination plot, to discover how similar are cities between each other.
@@ -845,6 +901,25 @@ ggsave("../plots/nmds_beta.png", plot = p1, width = 12, height = 8, units = "in"
 
 # Save as SVG
 ggsave("../plots/nmds_beta.svg", plot = p1, width = 12, height = 8, units = "in")
+```
+
+
+```{r}
+
+alpha_beta_bact <- plot_grid(
+    alpha_plot, p1,
+    labels = c("a", "b"),
+    label_size = 16,
+     rel_widths = c(1, 1.5)
+  )
+```
+
+```{r, save_nmds_plot, city, echo=FALSE}
+# Save as PNG
+ggsave("../plots/Figure_4.jpg", plot = alpha_beta_bact, width = 16, height = 8, units = "in", dpi = 1200)
+
+# Save as SVG
+ggsave("../plots/Figure_4.tiff", plot = alpha_beta_bact, width = 16, height = 8, units = "in", dpi = 1200)
 ```
 
 Now calculate Bray–Curtis distance again to use for Analysis of similarities (ANOSIM) and permutational multivariate analysis of variance using distance matrices (PERMANOVA).
@@ -958,7 +1033,7 @@ Industrial_wastewater_impact significance:
 
 ```{r, Kruskal_industry}
 
-ps_tax_ww_impact = subset_samples(ps_bact_filtered, sample_data(ps_bact_filtered)$Industrial_wastewater_impact != "Na")
+ps_tax_ww_impact = subset_samples(ps_bact_filtered, sample_data(ps_bact_filtered)$Industrial_wastewater_impact != "None")
 
 alpha_indexes_ww_impact <- estimate_richness(ps_tax_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
 
@@ -977,10 +1052,14 @@ Industrial_wastewater_impact_from_food:
 
 kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_tax_ww_impact)$Industrial_wastewater_impact_from_food)
 
+kruskal.test(alpha_indexes_ww_impact$InvSimpson ~ sample_data(ps_tax_ww_impact)$Industrial_wastewater_impact_from_food)
+
 
 dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon, 
           sample_data(ps_tax_ww_impact)$Industrial_wastewater_impact_from_food, 
           method="bh")
+
+
 ```
 
 ```{r, wilcox_industry_bact}
@@ -993,11 +1072,25 @@ wilcox.test(alpha_indexes_ww_impact$Shannon~sample_data(ps_tax_ww_impact)$Metal_
 wilcox.test(alpha_indexes_ww_impact$Shannon~sample_data(ps_tax_ww_impact)$Washrooms, p.adjust.method = "BH")
 ```
 
+```{r, wilxon_simp}
+
+wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Dairy_farming, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Meat_production, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Metal_processing, p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Washrooms, p.adjust.method = "BH")
+```
+
+
+### Beta diversity
+
 Industrial_wastewater_impact
 
 ```{r, PERMANOVA_industry_tax}
 
-ps_tax_ww_impact = subset_samples(ps_CSS, sample_data(ps_CSS)$Industrial_wastewater_impact != "Na")
+ps_tax_ww_impact = subset_samples(ps_CSS, sample_data(ps_CSS)$Industrial_wastewater_impact != "None")
 
 tax_bray_ww <- phyloseq::distance(ps_tax_ww_impact, method = "bray")
 
@@ -1010,7 +1103,7 @@ From Food
 
 ```{r, food_industr}
 
-ps_tax_ww_impact = subset_samples(ps_CSS, sample_data(ps_CSS)$Industrial_wastewater_impact_from_food != "Na")
+ps_tax_ww_impact = subset_samples(ps_CSS, sample_data(ps_CSS)$Industrial_wastewater_impact_from_food != "None")
 
 tax_bray_ww <- phyloseq::distance(ps_tax_ww_impact, method = "bray")
 
@@ -1021,6 +1114,7 @@ print(adonis2_rez)
 PERMANOVA test for industrial variables.
 
 ```{r, loop_perm}
+set.seed(7)
 
 # take rest of the variables that we are looking at
 metadata_col = colnames(sample_data(ps_CSS))[9:12]

@@ -1,0 +1,389 @@
+---
+title: "coOcurance"
+output: html_document
+---
+
+Analysis is based on:
+Constructing and Analyzing Microbiome Networks in R. Mehdi Layeghifard, David M. Hwang, and David S. Guttman
+https://pubmed.ncbi.nlm.nih.gov/30298259/
+
+
+```{r}
+install.packages("igraph")
+install.packages("qgraph")
+install.packages("vegan")
+install.packages("MCL")
+```
+
+```{r}
+library(igraph)
+library(qgraph)
+library(vegan)
+library(MCL)
+library(SpiecEasi)
+```
+
+
+
+```{r}
+distances <- vegdist(ps_amr_CSS@otu_table,
+method = "bray")
+```
+
+## Dissimilarity-Based Network
+
+
+```{r}
+# Convert distance object to a matrix
+diss.mat <- as.matrix(distances)
+diss.cutoff <- 0.6
+diss.adj <- ifelse(diss.mat <= diss.cutoff, 1, 0)
+# Construct microbiome network from adjacency matrix
+diss.net <- graph.adjacency(diss.adj,
+mode = "undirected",
+diag = FALSE)
+```
+
+```{r}
+diss.net
+```
+
+## Correlation-Based Network
+
+```{r}
+cor.matrix <- cor(ps_amr_CSS@otu_table, method = "pearson")
+```
+
+```{r}
+# Convert correlation matrix to binary adjacency matrix
+cor.cutoff <- 0.3
+cor.adj <- ifelse(abs(cor.matrix) >= cor.cutoff, 1, 0)
+# Construct microbiome network from adjacency matrix
+cor.net <- graph.adjacency(cor.adj,
+mode = "undirected",
+diag = FALSE)
+```
+
+```{r}
+##### Function 1: Construct microbiome network using permutation
+build.cor.net <- function(MB, method, num_perms, sig_level) {
+  
+  taxa <- dim(MB)[2]
+  MB.mat <- array(0, dim = c(taxa, taxa, num_perms + 1))
+  
+  # Perform permutation
+  MBperm <- permatswap(MB, "quasiswap", times = num_perms)
+  
+  # Convert to relative abundance
+  MB.relative <- MB / rowSums(MB)
+  MB.mat[,,1] <- as.matrix(cor(MB.relative, method = method))
+  
+  for(p in 2:num_perms) {
+    MBperm.relative <- MBperm$perm[[p-1]] / rowSums(MBperm$perm[[p-1]])
+    MB.mat[, , p] <- as.matrix(cor(MBperm.relative, method = method))
+  }
+  
+  # Get p-values
+  pvals <- sapply(1:taxa,function(i) sapply(1:taxa, function(j) sum(MB.mat[i, j, 1] > MB.mat[i, j, 2:num_perms])))
+  pvals <- pvals / num_perms
+  # p-value correction
+  pvals_BH <- array(p.adjust(pvals, method = "BH"),dim=c(nrow(pvals), ncol(pvals)))
+  
+  # Build adjacency matrix
+  adj.mat <- ifelse(pvals_BH >= (1 - sig_level), 1, 0)
+  
+  # Add names to rows & cols
+  rownames(adj.mat) <- colnames(MB)
+  colnames(adj.mat) <- colnames(MB)
+  
+  # Build and return the network
+  graph <- graph.adjacency(adj.mat, mode= "undirected", diag=FALSE)
+  
+}
+```
+
+
+```{r}
+# Execute this command after running Function 1
+cor.net.2 <- build.cor.net(ps_scaffolds_filtered@otu_table,
+method = "pearson",
+num_perms = 100,
+sig_level = 0.01)
+```
+
+## EBICglasso
+
+```{r}
+# Compute (partial) correlations
+ebic.cor <- cor_auto(ps_scaffolds_filtered@otu_table)
+# Identify graph with the best EBIC
+ebic.graph <- EBICglasso(ebic.cor, ncol(ps_scaffolds_filtered@otu_table), 0.5)
+# Build the network
+ebic.qgnet <- qgraph(ebic.graph, DoNotPlot = TRUE)
+# Convert to igraph network
+ebic.net <- as.igraph(ebic.qgnet, attributes = TRUE)
+```
+
+## SparCC and SPIEC-EASI
+
+```{r}
+# SparCC network
+sparcc.matrix <- sparcc(t(ps_scaffolds_filtered@otu_table))
+sparcc.cutoff <- 0.3
+sparcc.adj <- ifelse(abs(sparcc.matrix$Cor) >= sparcc.cutoff, 1, 0)
+# Add OTU names to rows and columns
+rownames(sparcc.adj) <- colnames(t(ps_scaffolds_filtered@otu_table))
+colnames(sparcc.adj) <- colnames(t(ps_scaffolds_filtered@otu_table))
+# Build network from adjacency
+sparcc.net <- graph.adjacency(sparcc.adj,
+mode = "undirected",
+diag = FALSE)
+```
+
+
+```{r}
+# SPIEC-EASI network
+SpiecEasi.matrix <- spiec.easi(ps_scaffolds_filtered@otu_table,
+  method = "glasso",
+  lambda.min.ratio = 1e-2,
+  nlambda = 20,
+  icov.select.params = list(rep.num = 50)
+)
+  
+# Add OTU names to rows and columns
+rownames(SpiecEasi.matrix$refit) <- colnames(ps_scaffolds_filtered@otu_table)
+
+# Build network from adjacency
+SpiecEasi.net <- graph.adjacency(SpiecEasi.matrix$refit,
+  mode = "undirected",
+  diag = FALSE)
+```
+
+
+
+## Hub Detection 
+
+```{r}
+# Use sparcc.net for the rest of the method
+net <- sparcc.net
+```
+
+
+Hubs are nodes in the network that have a significantly larger
+number of links compared to the other nodes in the network. A
+hub in a microbiome network can be considered as an equiva-
+lent to a keystone species in the microbial community. Using
+centrality indices (closeness and betweenness below) to find
+keystone species will output a vector containing values between
+0 and 1 for every node in the network. Link-analysis methods
+(page_rank and hub_score below), on the other hand, will
+output an object in which there is a vector containing the values
+for the nodes.
+
+```{r}
+# Hub detection
+net.cn <- closeness(net)
+net.bn <- betweenness(net)
+net.pr <- page_rank(net)$vector
+net.hs <- hub_score(net)$vecto
+```
+
+These centrality vectors can be sorted to select taxa with high-
+est probability of being keystone species. In the following,
+nodes are sorted based on their hub_score measurements (net.
+hs below) and the top 5 (n ¼ 5 below) are chosen.
+
+```{r}
+# Sort the species based on hubbiness score
+net.hs.sort <- sort(net.hs, decreasing = TRUE)
+# Choose the top 5 keystone species
+net.hs.top5 <- head(net.hs.sort, n = 5)
+```
+
+## Cluster Detection 
+
+Two cluster-detection methods from the igraph package and
+one from the MCL package are used here. It should be noted
+that igraph methods output an object containing various infor-
+mation on the detected clusters, including but not limited to
+the membership of each cluster.
+
+```{r}
+# Get clusters
+wt <- walktrap.community(net)
+ml <- multilevel.community(net)
+# Get membership of walktrap clusters
+membership(wt)
+# Get clusters using MCL method
+adj <- as_adjacency_matrix(net)
+mc <- mcl(adj, addLoops = TRUE)
+```
+
+The clusters detected by various methods can be compared to
+each other using igraph’s compare function. In addition, cus-
+tomized vectors of known or expected cluster memberships can
+be created in order to compare with the results of the clustering
+methods. Here, we divided the nodes into five clusters by
+random sampling (sample function below). This, however,
+could be replaced by a user-provided list. In case of identical
+clusters, the output will be 0. Identified clusters (wt below) can
+be plotted as a dendrogram.
+
+```{r}
+# Compare clusters detected by different methods
+compare(membership(wt), membership(ml))
+compare(membership(wt), mc$Cluster)
+# Create customized membership for comparison
+expected.cls <- sample(1:5, vcount(net), replace = T) %>%
+as_membership
+compare(expected.cls, membership(wt))
+# Plot clusters as dendrogram
+plot_dendrogram(wt)
+```
+
+
+One measure of the strength of division of a network into
+clusters or modules is network modularity. High modularity
+indicates that the network has dense connections within certain
+groups of nodes and sparse connections between these groups.
+The modularity of a graph with respect to a given membership
+vector can be used to estimate how separated different clusters
+of taxa are from each other.
+
+```{r}
+# Calculate modularity
+modularity(net, membership(wt))
+```
+
+
+## Network Features
+
+
+```{r}
+# Network features
+nodes <- V(net)
+edges <- V(net)
+node.names <- V(net)$name
+num.nodes <- vcount(net)
+num.edges <- ecount(net)
+```
+
+
+Transitivity, also known as the clustering coefficient, measures
+the probability that the adjacent nodes of a certain node are
+themselves connected. Using local type will generate a score for
+every node in the network, whereas using global type will
+produce one transitivity score for the whole network.
+
+```{r}
+clustering_coeff <- transitivity(net, type = "global")
+```
+
+
+Show which nodes are directly connected to any given node in the network. 
+Use the neighbors function. To see if two nodes share any
+neighboring nodes using the intersection function.
+
+```{r}
+# Obtain the neighbors of nodes 1 and 25
+otu1_neighbors <- neighbors(net, "cmlA5")
+otu25_neighbors <- neighbors(net, "OTU_25")
+# Find neighbors shared by nodes 1 and 25
+intersection(otu1_neighbors, otu25_neighbors)
+```
+
+
+All the edges incident to one or multiple nodes (i.e., all edges
+connecting that node or nodes to other nodes) can be obtained
+using incident and incident_edges functions, respectively. The
+number of links connecting any given node to the network is
+that node’s degree. Indegree of a node is the number of links
+ending at that node and outdegree is the number of links
+originating from the node. In undirected networks, indegree
+and outdegree are the same, hence the mode is set to “all.”
+
+```{r}
+# Edges incident to OTU_1
+otu1.edges <- incident(net, "OTU_1", mode = "all")
+# Edges incident to OTU_1 and OTU_25
+otus.edges <- incident_edges(net, c("OTU_1", "OTU_25"),
+mode = "all")
+# Extracting/printing the incident edges separately
+otus.edges$"OTU_1"
+otus.edges$"OTU_25"
+```
+
+
+he average nearest neighbor degree (ANND) of a given node
+(or a set of nodes) can be calculated using the knn function.
+ANND is a measure of the dependencies between degrees of
+neighbor nodes. This allows us to test if the correlation
+between degrees of neighbor nodes is positive and the nodes
+of high degree have a preference to connect to other nodes of
+high degree or the correlation is negative and the nodes of high
+degree have a connection preference for nodes of low degree.
+The following code snippet calculates and prints the average
+nearest neighbor degree for all the nodes in the network
+(hence, vids ¼ V(net))
+
+```{r}
+net.knn <- knn(net, vids = V(net))
+net.knn$knn
+```
+
+To find all nodes reachable, directly or indirectly, from a given
+node (e.g., OTU_1 below) we can use the subcomponent func-
+tion which outputs a list of connections.
+
+```{r}
+sub.node1 <- subcomponent(net, v = "cmlA5", mode = "all")
+```
+
+isolated nodes that are not connected to any other node in the
+network can be removed as follows. 
+
+```{r}
+clean.net <- delete.vertices(net, which(degree(net, mode = "all")
+== 0))
+```
+
+If a network is consisted of multiple disconnected
+components. These components can be obtained and printed
+as follows.
+
+```{r}
+# Network components
+net.comps <- components(net)
+# Print components membership
+net.comps$membership
+# Print components sizes
+net.comps$csize
+# Print number of components
+net.comps$no
+```
+
+
+## Plot
+
+```{r}
+plot(clean.net)
+```
+
+```{r}
+# Customized plotting
+plot(clean.net,
+main = "Microbiome Network",
+vertex.color = "white",
+vertex.size = 12,
+vertex.shape = "circle",
+vertex.frame.color = "green",
+Vertex.label.size = 1,
+Vertex.label.color = "black",
+edge.color = "grey",
+layout = layout.fruchterman.reingold)
+```
+
+
+
+
+

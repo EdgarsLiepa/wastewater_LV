@@ -1,0 +1,154 @@
+---
+title: "Plasmids"
+output: html_document
+---
+
+```{r}
+
+plasmid_arg <- read.csv("../results/all_amr_locations.tsv", sep="\t", header = TRUE)
+
+```
+
+```{r}
+plasmid_arg
+```
+
+Genetic elements with genes
+
+```{r}
+unique(plasmid_arg$location)
+```
+
+
+Number of Unique genes found
+
+```{r}
+length(unique(plasmid_arg$ref_gene_name))
+```
+
+Number of genes in Plasmids
+
+```{r}
+length(unique(plasmid_arg$ref_gene_name[plasmid_arg$location == "mobilome:plasmid"]))
+```
+
+
+Count how mant times each gene has been found in a contig.
+
+```{r}
+sort(table(plasmid_arg$ref_gene_name))
+```
+
+Count how mant times each gene has been found in a *plasmid* contig.
+
+```{r}
+sort(table(plasmid_arg$ref_gene_name[plasmid_arg$location == "mobilome:plasmid"]))
+```
+
+```{r}
+plasmid_arg[plasmid_arg$location != "chromosome",]
+
+```
+
+Show AMR gene counts in plasmids
+
+```{r}
+
+head(sort(table(plasmid_arg[plasmid_arg$location != "chromosome",]$contig_id),decreasing = TRUE))
+
+```
+
+Plasmids with multiple genes
+
+```{r}
+head(sort(table(plasmid_arg[plasmid_arg$location != "chromosome",]$contig_id),decreasing = TRUE)[sort(table(plasmid_arg[plasmid_arg$location != "chromosome",]$contig_id),decreasing = TRUE)>1]
+)
+```
+
+
+```{r}
+
+
+plasmid_arg[plasmid_arg$contig_id == "ERZ24875759.1194",]
+
+```
+
+
+
+## FUNCSCAN
+
+
+```{r}
+funcscan_arg <- read.csv("../results/hamronization_combined_report.tsv", sep="\t", header = TRUE)
+```
+
+
+```{r}
+funcscan_arg
+```
+
+```{r}
+# Show gene count
+length(sort(table(funcscan_arg$gene_symbol),decreasing = TRUE))
+
+# Total Gene accourences
+sum(table(funcscan_arg$gene_symbol),decreasing = TRUE)
+
+```
+
+
+
+```{r}
+# Count per drug class
+sort(table(funcscan_arg$reference_database_name),decreasing = TRUE)
+```
+
+
+
+```{r}
+# Count per drug class
+sort(table(funcscan_arg$drug_class),decreasing = TRUE)
+```
+
+
+
+```{r}
+# Count per drug class
+head(sort(table(funcscan_arg$input_sequence_id),decreasing = TRUE))
+```
+
+```{r}
+funcscan_arg[funcscan_arg$input_sequence_id=="ERZ24875765.3449|plasmid-1:5657",]
+
+
+```
+
+# Top Genes
+
+## FuncSan
+
+20 most common genes in plasmids.
+
+```{r}
+
+ggplot(as.data.frame(sort(head(table(funcscan_arg$gene_symbol), n=20))), aes(y=Var1, x=Freq)) + 
+  geom_bar(stat = "identity") +  # Turn off interactive
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12)) +
+ggplot(as.data.frame(sort(head(table(funcscan_arg$drug_class), n=20))), aes(y=Var1, x=Freq)) + 
+  geom_bar(stat = "identity") +  # Turn off interactive
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12))
+```
+
+## RGI
+
+```{r}
+
+ggplot(as.data.frame(sort(head(table(plasmid_arg[plasmid_arg$location != "chromosome",]$class_summary), n=20))), aes(y=Var1, x=Freq)) + 
+  geom_bar(stat = "identity") +  # Turn off interactive
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12))+
+  ggplot(as.data.frame(sort(head(table(plasmid_arg[plasmid_arg$location != "chromosome",]$ref_gene_name), n=20))), aes(y=Var1, x=Freq)) + 
+  geom_bar(stat = "identity") +  # Turn off interactive
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12))
+
+```
+

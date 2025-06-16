@@ -72,11 +72,11 @@ print(plot)
 
 ```{r}
 # # Save the plot as a high-resolution PNG file
-ggsave("../plots/Sampling_Locations_in_Latvia.png",
+ggsave("../plots/Sampling_Locations_in_Latvia.jpg",
        plot,
        width = 12.5,
        height = 8,
-       dpi = 300)
+       dpi = 1200)
 
 ggsave("../plots/Sampling_Locations_in_Latvia.svg",
        plot,
@@ -156,13 +156,33 @@ ggplot(data = latvia_subregions) +
 
 #get abundance data from phyloseq objec
 
+# Shannon City values
+# Cesis	3.939758667
+# Dobele	4.031255333
+# Jelgava	3.907495
+# JurmalaS9	4.130385667
+# KuldigaT	4.111891333
+# Liepaja	3.974652333
+# Madona	3.942588
+# Salaspils	3.9780735
+# Saldus	3.967698
+# Sigulda	3.454083667
+# Smiltene	3.682146333
+# Talsi	4.075176
+# Tukums	4.003457667
+# Valmiera	3.415630333
+# Ventspils	3.856514333
+
 # Calculate city Sum by combining colsums and sample data by sample ID
 # Create a new data frame
-city_sum <- data.frame(Sample = names(colSums(otu_table(physeq_contigs))), Abundance = colSums(otu_table(physeq_contigs)))
+city_sum <- data.frame(Sample = names(colSums(otu_table(physeq_amr_families))), Abundance = colSums(otu_table(physeq_amr_families)))
 # Add city information
-city_sum$City <- sample_data(physeq_contigs)[match(city_sum$Sample, rownames(sample_data(physeq_contigs))), "City"]$City
+city_sum$City <- sample_data(physeq_amr_families)[match(city_sum$Sample, rownames(sample_data(physeq_amr_families))), "City"]$City
 # return sum per city
 aggregate(Abundance ~ City, data = city_sum, FUN = sum)
+
+
+alpha_indexes_amr$Shannon
 
 #
 #
@@ -316,14 +336,289 @@ grid.arrange(p1 + theme(axis.text.x = element_blank()), p2+ theme(axis.text.x = 
 
 ```
 
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(sf)
+library(dplyr)
+library(viridis)
+library(ggrepel)
+```
 
-
-#### Specificity
 
 ```{r}
 
+# Add basic points to your map
+ggplot() +
+  geom_sf(data = latvia_subregions, fill = NA, color = "gray50") +  # Add subregion borders
+  theme_minimal() +
+  theme(legend.position = "none")+
+  # Add points scaled by population
+  geom_point(data = resistome_data,
+             aes(x = lon, y = lat, fill = Population),
+             size = 5,
+             color = "#2c3e50", alpha = 0.8)
+
+
+
 ```
 
-### Overlap
 
-### Time and Memory
+
+
+```{r}
+ggplot(data = latvia_map) +
+ geom_sf(fill = "white", color = "black") + # Draw the country map
+ # Adjust point size based on population_size from resistome_sf
+ geom_sf(data = resistome_sf, aes(color = City, size = 30))+  # Adjust scaling factor as needed
+  theme_minimal() +
+  theme(
+    legend.text = element_text(size = 16), # legend title heading
+    legend.title = element_text(size = 18), # legend title heading
+    axis.text.x = element_blank(),  # Remove x-axis text
+    axis.text.y = element_blank(),  # Remove y-axis text
+    # remove legend
+    legend.position = "left"  # Move size legend to the bottom
+  ) +
+  scale_size_continuous(guide = guide_none())  # Remove size legend
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(cowplot)
+
+# Function to create the maps
+create_latvia_europe_map <- function(latvia_map, resistome_sf) {
+  # Create the main Latvia map
+  latvia_plot <- ggplot(data = latvia_map) +
+    geom_sf(fill = "white", color = "black") +
+    geom_sf(data = resistome_sf, aes(color = City), size = 3) +
+    theme_minimal() +
+    theme(
+      legend.text = element_text(size = 10),
+      legend.title = element_text(size = 12),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      legend.position = "left",
+      plot.margin = margin(5, 5, 5, 5)
+    ) +
+    labs(title = "Study Sites in Latvia")
+  
+  # Get Europe map data
+  europe <- ne_countries(scale = "medium", continent = "europe", returnclass = "sf")
+  
+  # Create the Europe inset map
+  # Find Latvia in the Europe dataset
+  latvia_index <- which(europe$name == "Latvia")
+  
+  # Create a copy of the Europe data and highlight Latvia
+  europe_highlight <- europe
+  europe_highlight$highlight <- "No"
+  europe_highlight$highlight[latvia_index] <- "Yes"
+  
+  europe_plot <- ggplot(data = europe_highlight) +
+    geom_sf(aes(fill = highlight), color = "black", size = 0.1) +
+    scale_fill_manual(values = c("No" = "grey85", "Yes" = "red")) +
+    theme_void() +
+    theme(
+      legend.position = "none",
+      plot.background = element_rect(fill = "white", color = "black"),
+      plot.margin = margin(1, 1, 1, 1)
+    )
+  
+  # Combine the plots
+  combined_plot <- ggdraw() +
+    draw_plot(latvia_plot) +
+    draw_plot(europe_plot, x = 0.65, y = 0.15, width = 0.3, height = 0.3)
+  
+  return(combined_plot)
+}
+
+# Usage:
+# To use this function, you need:
+# 1. latvia_map - sf object with Latvia's boundaries
+# 2. resistome_sf - sf object with your city points
+# 
+# Example:
+# final_map <- create_latvia_europe_map(latvia_map, resistome_sf)
+# ggsave("latvia_europe_context.png", final_map, width = 10, height = 8)
+
+# Alternative approach using sf attributes if your objects have different structures
+create_latvia_europe_map_alt <- function(latvia_map, city_data) {
+  # If city_data is not an sf object but a data frame with coordinates
+  # Convert to sf object
+  if (!inherits(city_data, "sf")) {
+    city_sf <- st_as_sf(city_data, coords = c("longitude", "latitude"), crs = st_crs(latvia_map))
+  } else {
+    city_sf <- city_data
+  }
+  
+  # Create the main Latvia map
+  latvia_plot <- ggplot(data = latvia_map) +
+    geom_sf(fill = "white", color = "black") +
+    geom_sf(data = city_sf, aes(color = City), size = 3) +
+    theme_minimal() +
+    theme(
+      legend.text = element_text(size = 10),
+      legend.title = element_text(size = 12),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      legend.position = "left",
+      plot.margin = margin(5, 5, 5, 5)
+    ) +
+    labs(title = "Study Sites in Latvia")
+  
+  # Get Europe map data
+  europe <- ne_countries(scale = "medium", continent = "europe", returnclass = "sf")
+  
+  # Create the Europe inset map
+  # Find Latvia in the Europe dataset
+  latvia_index <- which(europe$name == "Latvia" | europe$admin == "Latvia")
+  
+  # Create a copy of the Europe data and highlight Latvia
+  europe_highlight <- europe
+  europe_highlight$highlight <- "No"
+  europe_highlight$highlight[latvia_index] <- "Yes"
+  
+  europe_plot <- ggplot(data = europe_highlight) +
+    geom_sf(aes(fill = highlight), color = "black", size = 0.1) +
+    scale_fill_manual(values = c("No" = "grey85", "Yes" = "red")) +
+    theme_void() +
+    theme(
+      legend.position = "none",
+      plot.background = element_rect(fill = "white", color = "black"),
+      plot.margin = margin(1, 1, 1, 1)
+    )
+  
+  # Combine the plots
+  combined_plot <- ggdraw() +
+    draw_plot(latvia_plot) +
+    draw_plot(europe_plot, x = 0.65, y = 0.15, width = 0.3, height = 0.3)
+  
+  return(combined_plot)
+}
+```
+
+```{r}
+
+library(ggplot2)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(cowplot)
+
+# Function to create the maps
+create_latvia_europe_map <- function(latvia_map, resistome_sf) {
+  # Create the main Latvia map
+  latvia_plot <- ggplot(data = latvia_map) +
+    geom_sf(fill = "white", color = "black") +
+    geom_sf(data = resistome_sf, color = "black", size = 10) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      plot.margin = margin(5, 5, 5, 5)
+    )
+  
+  # Get Europe map data
+  europe <- ne_countries(scale = "medium", continent = "europe", returnclass = "sf")
+  
+  # Define Northern European countries
+  northern_europe <- c(
+    "Latvia", "Lithuania", "Estonia", 
+    "Finland", "Sweden", "Norway", "Denmark",
+    "Poland", "Germany", "Russia", "Belarus"
+  )
+  
+  # Filter for Northern Europe
+  northern_europe_sf <- europe[europe$name %in% northern_europe, ]
+  
+  # Create the Northern Europe inset map
+  # Find Latvia in the dataset
+  latvia_index <- which(northern_europe_sf$name == "Latvia")
+  
+  # Create a copy of the Northern Europe data and highlight Latvia
+  northern_europe_highlight <- northern_europe_sf
+  northern_europe_highlight$highlight <- "No"
+  northern_europe_highlight$highlight[latvia_index] <- "Yes"
+  
+  # Create the inset map
+  europe_plot <- ggplot(data = northern_europe_highlight) +
+    geom_sf(aes(fill = highlight), color = "black", size = 0.1) +
+    scale_fill_manual(values = c("No" = "grey85", "Yes" = "red")) +
+    coord_sf(
+      xlim = c(5, 35),  # Adjust these coordinates to focus on Northern Europe
+      ylim = c(53, 65)  # Adjust these coordinates to focus on Northern Europe
+    ) +
+    theme_void() +
+    theme(
+      legend.position = "none",
+      plot.background = element_rect(fill = "white", color = "black"),
+      plot.margin = margin(1, 1, 1, 1)
+    )
+  
+  # Combine the plots
+  combined_plot <- ggdraw() +
+    draw_plot(latvia_plot) +
+    draw_plot(europe_plot, x = 0.65, y = 0.05, width = 0.3, height = 0.3)
+  
+  return(combined_plot)
+}
+
+
+
+# Get Latvia boundary data
+latvia_map <- ne_countries(scale = "large", country = "Latvia", returnclass = "sf")
+
+# Create sample city data for Latvia
+cities <- data.frame(
+  City = c("Cesis", "Dobele", "Jelgava", "Jurmala", "Kuldiga", 
+           "Liepāja", "Madona", "Salaspils", "Saldus", "Sigulda", 
+           "Smiltene", "Talsi", "Tukums", "Valmiera", "Ventspils"),
+  longitude = c(25.2714, 23.2819, 23.7128, 23.7745, 21.9614, 
+                21.0109, 26.2154, 24.3650, 22.4919, 24.8573, 
+                25.9006, 22.5814, 23.1561, 25.4256, 21.5606),
+  latitude = c(57.3119, 56.6234, 56.6513, 56.9677, 56.9742, 
+               56.5047, 56.8527, 56.8610, 56.6642, 57.1533, 
+               57.4249, 57.2456, 56.9667, 57.5387, 57.3894)
+)
+
+# Convert cities to sf object
+resistome_sf <- st_as_sf(cities, coords = c("longitude", "latitude"), crs = st_crs(latvia_map))
+
+# Load the create_latvia_europe_map function
+# (This is defined in the main artifact)
+
+# Create the map
+final_map <- create_latvia_europe_map(latvia_map, resistome_sf)
+
+# To save the result
+# ggsave("latvia_northern_europe_context.png", final_map, width = 10, height = 8, dpi = 300)
+
+# Display the map
+final_map
+```
+
+```{r}
+final_map
+
+# # Save the plot as a high-resolution PNG file
+ggsave("../plots/abstract_map.png",
+       final_map,
+       width = 12.5,
+       height = 8,
+       dpi = 1200)
+
+ggsave("../plots/abstract_map.svg",
+       final_map,
+       width = 12.5,
+       height = 8,
+       dpi = 1200,
+       device = "svg")
+```
+

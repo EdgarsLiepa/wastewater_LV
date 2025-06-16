@@ -39,8 +39,10 @@ Read data resistance data.
 AMR genes were classified in metagenome assemblies using Resistance gene finder.
 
 Then genes were quantified by aligning short read sequencing reads to the assemblies
-and sequenceing read overlap was counted in positions with ht-seq. 
+and sequencing read overlap was counted in positions with ht-seq. 
 
+Combined results from HT-Seq is imported in R as a gene abundance matrix
+and combined with metadta information in **Phyloseq** object
 
 ```{r, read_amr}
 ARG_SCAFFOLDS_F = "../Resistance_genes/AMR_genes_RGI_scaffolds_filtered.csv"
@@ -64,7 +66,7 @@ sample_names(ps_amr) <- name_mapping[sample_names(ps_amr)]
 
 ```
 
-Display amount of sequencing reads alligning to a AMR genes found in contigs.
+Display count of AMR gene reads found in samples.
 
 ```{r, plot_amr}
 
@@ -76,7 +78,8 @@ hist(log10(sample_sums(ps_amr)), breaks=50, main="Sample size distribution", xla
 ```
 ### Filtering 
 
-Since we removed some samples from bacterial anlysis, we have to remove them also here.    
+Since we removed some samples from bacterial analysis, we have to remove them also here.
+
 
 ```{r, hist_amr}
 ps_amr_good = subset_samples(ps_amr, sample_data(ps_amr)$Sample != "Salaspils.2")
@@ -84,14 +87,19 @@ ps_amr_good = subset_samples(ps_amr_good, sample_data(ps_amr_good)$Sample != "Ta
 
 hist(log10(sample_sums(ps_amr_good)), breaks=50, main="Sample size distribution", xlab="Sample size (log10)", ylab="Frequency", col="#007c80")
 ```
-Now we remove singleton reads that are assigned to genes with only one alligned read across all samples.
+
+Now we remove singleton reads that are assigned to genes with only one aligned read across all samples.
 
 ```{r, filter_amr}
 # Less strict filterring option
 # remove singletons. 
 ps_scaffolds_filtered = phyloseq::filter_taxa(ps_amr_good, function(x) sum(x) > 1, prune=TRUE)
+```
 
 
+Lets see how many times samples size differs.
+
+```{r, diff_amr}
 max_difference = max(sample_sums(ps_scaffolds_filtered))/min(sample_sums(ps_scaffolds_filtered))
 
 # The max difference in sequencing depth between largest and smallest sample
@@ -99,12 +107,15 @@ max_difference
 
 ```
 
+
+Range of sample size in reconstructed samples.
+
 ```{r, amr_depth}
-boxplot(sample_sums(ps_scaffolds_filtered), main="Sequencing depth across samples removed singletons", xlab="", ylab="Number of reads", col="#a6093d")
+boxplot(sample_sums(ps_scaffolds_filtered), main="Samples depth across samples removed singletons", xlab="", ylab="Number of reads", col="#a6093d")
 text(y=boxplot.stats(sample_sums(ps_scaffolds_filtered))$stats, labels=boxplot.stats(sample_sums(ps_scaffolds_filtered))$stats, x=1.25)
 ```
 
-Print the dimensions of the filtered data
+The dimensions of the filtered data
 Number of genes found in samples after filtering
 
 ```{r, amr_size}
@@ -112,7 +123,7 @@ dim(data.frame(otu_table(ps_scaffolds_filtered)))
 ```
 
 
-Print the total sequence count after filtering
+Total sequence count after filtering
 Number of sequences in all samples
 
 ```{r, amr_size2}
@@ -121,6 +132,7 @@ sum(data.frame(otu_table(ps_scaffolds_filtered)))
 
 
 Calculate and print the percentage of sequences dropped from the original dataset
+
 ```{r, calc_drop}
 original_seq_count = sum(data.frame(otu_table(ps_amr_good)))
 filtered_seq_count = sum(data.frame(otu_table(ps_scaffolds_filtered)))
@@ -134,15 +146,15 @@ seq_dropped_percentage
 ```
 
 
-Show AMR gene distribution across samples
+AMR gene distribution across samples
 
 ```{r, abundance_plot, warning=FALSE}
-ps_scaffolds_filtered %>%
-    ps_mutate(Group = factor(sample_data(ps_scaffolds_filtered)$City)) %>%
+ps_amr_good %>%
+    ps_mutate(Group = factor(sample_data(ps_amr_good)$City)) %>%
     tax_agg("ARG") %>%
     ps_seriate(dist = "bray", method = "OLO_ward") %>%
     comp_barplot(tax_level = "ARG", 
-                 sample_order = rownames(sample_data(ps_scaffolds_filtered)[order(sample_data(ps_scaffolds_filtered)$Sample), ]), 
+                 sample_order = rownames(sample_data(ps_amr_good)[order(sample_data(ps_amr_good)$Sample), ]), 
                  n_taxa = 10, 
                  label = "Sample") +
     theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
@@ -152,6 +164,8 @@ ps_scaffolds_filtered %>%
 ### CARD DB gene anotations
 
 Using CARD DB we take reconstructed genes to assign for witch AMR group, AMR familie and AMR category they belong.
+
+Load extra functions to parse CARD DB and reconstructed ARGs.
 
 ```{r, load_card, results='hide'}
 
@@ -216,6 +230,9 @@ physeq_amr_families <- createPhyloseqObject(amr_families_counts, METADATA_PATH)
 physeq_amr_categories <- createPhyloseqObject(amr_categories_counts, METADATA_PATH)
 ```
 
+
+#### AMR categories
+
 Show to what Drug classes resistance genes found in metagenome are resistant to.
 
 ```{r, warning=FALSE}
@@ -233,6 +250,8 @@ physeq_amr_categories %>%
 ```
 
 
+#### Drug Class
+
 ```{r, drug_class_pl}
 physeq_drug_class %>%
     ps_mutate(Group = factor(sample_data(physeq_drug_class)$City)) %>%
@@ -246,6 +265,8 @@ physeq_drug_class %>%
     facet_grid(~Group, scales = "free", space = "free")
 
 ```
+
+#### AMR Families
 
 ```{r, family_pl, fig.width=10, fig.height=4.5}
 physeq_amr_families %>%
@@ -265,6 +286,8 @@ physeq_amr_families %>%
     facet_grid(~Group, scales = "free", space = "free")
 
 ```
+
+Combined plot for paper.
 
 ```{r, combined_pl, fig.height=12, fig.width=14}
 
@@ -336,8 +359,7 @@ ggsave("../plots/arg_diversity.svg", plot = combined_plot, width = 24, height = 
 
 
 
-Show gene distribution
-
+Show all gene distribution on a NMDS plot with top10 genes colored
 
 
 ```{r, ordination_plot}
@@ -359,12 +381,12 @@ plot_ordination(GP1, GP.ord2, type="taxa", color = "ARG", title="ARGs") + theme(
 ### Normalization
 
 
-Normalization by subsampling (rarefaction)
+Here we evaluate how sample size of reconstructed reads impacts the recall of ARGs using normalization by subsampling (rarefaction)
 
 Display rarefication curves.
 
 ```{r, rare_curve_amr}
-tab <- otu_table(ps_scaffolds_filtered)
+tab <- otu_table(ps_amr_good)
 class(tab) <- "matrix"
 tab <- t(tab)
 
@@ -372,41 +394,38 @@ rarecurve(tab, step=10, lwd=2, ylab="OTU",  label=F)
 
 ```
 
-Rarefication if needed.
+Show smallest sample size to rarefy to and do rarefication if needed.
 
 ```{r, rare_amr}
 # find minimal deapth to rarefy to
-df=as.data.frame(sample_sums(ps_scaffolds_filtered))
+df=as.data.frame(sample_sums(ps_amr_good))
 head(df[order( df[,1] ),],1)
 
-ps_amr_rare = rarefy_even_depth(ps_scaffolds_filtered, sample.size=820, replace=FALSE, rngseed=123, verbose=FALSE)
+# ps_amr_rare = rarefy_even_depth(ps_scaffolds_filtered, sample.size=820, replace=FALSE, rngseed=123, verbose=FALSE)
 
 ```
 
+Since individual sample curves showed good recall and samples sizes are not too far apart this was not used.
 
-Normalization by cumulative sum scaling (CSS)
+
+
+For beta diversity analysis normalization by cumulative sum scaling (CSS) was done to phyloseq object with singleton removed reads.
 
 ```{r, css_amr}
 ps_amr_CSS = microbiomeMarker::normalize(ps_scaffolds_filtered, method="CSS")
 ```
 
-### Most abundant genes
+## Most abundant genes
 
-Show Top 15 most abundant genes and their relative xount
+Show Top 15 most abundant genes and their relative count
 
 ```{r, top_amr}
-
+## Calculate realtive abundance
 genes_transformed  = transform_sample_counts(ps_scaffolds_filtered, function(x) x / sum(x) )
 
 abu_table <- as.data.frame(otu_table(genes_transformed))
 tax_table <- as.data.frame(tax_table(genes_transformed))
 rownames(abu_table) <- tax_table$ARG
-
-total_counts <- rowSums(abu_table)
-top_organisms <- sort(total_counts, decreasing = TRUE)
-top_organisms <- head(top_organisms, n = 15)
-
-top_organisms
 
 mean_percentage <- apply(abu_table, 1, mean) * 100
 std_dev <- sqrt(apply(abu_table, 1, var)) * 100
@@ -427,91 +446,93 @@ formatted_output
 ```
 
 
+
 Show Drug classes that these genes are affecting
 
 ```{r, drug_top}
-abu_table <- as.data.frame(otu_table(physeq_drug_class))
-tax_table <- as.data.frame(tax_table(physeq_drug_class))
+
+genes_transformed  = transform_sample_counts(physeq_drug_class, function(x) x / sum(x) )
+
+abu_table <- as.data.frame(otu_table(genes_transformed))
+tax_table <- as.data.frame(tax_table(genes_transformed))
 rownames(abu_table) <- tax_table$ARG
 
-total_counts <- rowSums(abu_table)
-top_organisms <- sort(total_counts, decreasing = TRUE)
-top_organisms <- head(top_organisms, n = 15)
+mean_percentage <- apply(abu_table, 1, mean) * 100
+std_dev <- sqrt(apply(abu_table, 1, var)) * 100
 
-top_organisms
+top_genes <- sort(mean_percentage, decreasing = TRUE) %>% head(n = 15) %>% as.data.frame %>% rownames
 
-# Calculate the percentage of the top 15 organisms
-print("Percentage of top 15 organisms:")
-top_organisms/sum(rowSums(abu_table))*100
+# Format output with both mean percentage and standard deviation
+formatted_output <- sapply(top_genes, function(gene) {
+  sprintf("%s (%.2f%% +/- %.2f%%)", 
+          gene, 
+          unname(mean_percentage[gene]), 
+          unname(std_dev[gene])
+          )
+})
+
+# Display formatted output
+formatted_output
 ```
 
 
 Show most common amr_gene families.
 
 ```{r, top_amr2}
-abu_table <- as.data.frame(otu_table(physeq_amr_families))
-tax_table <- as.data.frame(tax_table(physeq_amr_families))
+
+genes_transformed  = transform_sample_counts(physeq_amr_families, function(x) x / sum(x) )
+
+abu_table <- as.data.frame(otu_table(genes_transformed))
+tax_table <- as.data.frame(tax_table(genes_transformed))
 rownames(abu_table) <- tax_table$ARG
 
-total_counts <- rowSums(abu_table)
-top_organisms <- sort(total_counts, decreasing = TRUE)
-top_organisms <- head(top_organisms, n = 15)
+mean_percentage <- apply(abu_table, 1, mean) * 100
+std_dev <- sqrt(apply(abu_table, 1, var)) * 100
 
-top_organisms
-
-```
-
-Show most commonly affected drug classes.
-
-```{r}
-abu_table <- as.data.frame(otu_table(physeq_amr_categories))
-tax_table <- as.data.frame(tax_table(physeq_amr_categories))
-rownames(abu_table) <- tax_table$ARG
-
-total_counts <- rowSums(abu_table)
-top_organisms <- sort(total_counts, decreasing = TRUE)
-top_organisms <- head(top_organisms, n = 15)
-
-top_organisms
-
-```
-
-Calculate mean relative abundance and variance
-
-```{r}
-
-genus_transformed_amr  = transform_sample_counts(physeq_amr_families, function(x) x / sum(x) )
-
-abu_table_arg <- as.data.frame(otu_table(genus_transformed_amr))
-tax_table_arg <- as.data.frame(tax_table(genus_transformed_amr))
-rownames(abu_table_arg) <- tax_table_arg$Tax
-
-variance <- apply(abu_table_arg, 1, var)
-mean_percentage <- apply(abu_table_arg, 1, mean) * 100
-std_dev <- sqrt(apply(abu_table_arg, 1, var)) * 100
-
-
-top_arg <- sort(mean_percentage, decreasing = TRUE) %>% head(n = 15) %>% as.data.frame %>% rownames
+top_genes <- sort(mean_percentage, decreasing = TRUE) %>% head(n = 15) %>% as.data.frame %>% rownames
 
 # Format output with both mean percentage and standard deviation
-formatted_output <- sapply(top_arg, function(arg) {
+formatted_output <- sapply(top_genes, function(gene) {
   sprintf("%s (%.2f%% +/- %.2f%%)", 
-          arg, 
-          unname(mean_percentage[arg]), 
-          unname(std_dev[arg])
+          gene, 
+          unname(mean_percentage[gene]), 
+          unname(std_dev[gene])
           )
 })
 
 # Display formatted output
 formatted_output
 
-variance <- apply(abu_table_arg["MCR phosphoethanolamine transferase",], 1, var)
-mean_percentage <- apply(abu_table_arg["MCR phosphoethanolamine transferase",], 1, mean) * 100
-std_dev <- sqrt(apply(abu_table_arg["MCR phosphoethanolamine transferase",], 1, var)) * 100
-
-
 ```
 
+Show most commonly affected drug classes.
+
+```{r}
+genes_transformed  = transform_sample_counts(physeq_amr_categories, function(x) x / sum(x) )
+
+
+abu_table <- as.data.frame(otu_table(genes_transformed))
+tax_table <- as.data.frame(tax_table(genes_transformed))
+rownames(abu_table) <- tax_table$ARG
+
+mean_percentage <- apply(abu_table, 1, mean) * 100
+std_dev <- sqrt(apply(abu_table, 1, var)) * 100
+
+top_genes <- sort(mean_percentage, decreasing = TRUE) %>% head(n = 15) %>% as.data.frame %>% rownames
+
+# Format output with both mean percentage and standard deviation
+formatted_output <- sapply(top_genes, function(gene) {
+  sprintf("%s (%.2f%% +/- %.2f%%)", 
+          gene, 
+          unname(mean_percentage[gene]), 
+          unname(std_dev[gene])
+          )
+})
+
+# Display formatted output
+formatted_output
+
+```
 
 
 ## City
@@ -523,10 +544,8 @@ Exploring differences how AMR gene composition is affected by Municipality facto
 #### Alpha diversity
 
 
-
-
 ```{r, plot_div_amr, fig.width=7.2, fig.height=6}
-alph_city <- plot_richness(ps_scaffolds_filtered, x="City", measures=c("InvSimpson", "Shannon"), nrow = 2, sortby = "Shannon") + 
+alph_city <- plot_richness(ps_amr_good, x="City", measures=c("InvSimpson", "Shannon"), nrow = 2, sortby = "Shannon") + 
     geom_boxplot() + 
     theme_bw() +
     theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))+
@@ -558,23 +577,12 @@ Calculate distance
 
 ```{r, fig.width=9, fig.height=5, text.width=10}
 # Calculate diversity indexes
-alpha_indexes_amr <- estimate_richness(ps_scaffolds_filtered, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+alpha_indexes_amr <- estimate_richness(ps_amr_good, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
 
-kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_scaffolds_filtered)$City)
-kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_scaffolds_filtered)$City)
-
-```
-
-```{r, fig.width=9, fig.height=5, text.width=10}
-# Calculate diversity indexes
-alpha_indexes_amr <- estimate_richness(ps_scaffolds_filtered, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
-
-kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_scaffolds_filtered)$City)
-kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_scaffolds_filtered)$City)
+kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_amr_good)$City)
+kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_amr_good)$City)
 
 ```
-
-
 
 
 Kruskal-Wallis rank sum test show significant differences in overall AMR diversity (Shannon)
@@ -597,7 +605,7 @@ pinpoint which specific means are significantlt different from the others
 ```{r, dune_amr_shan}
 library(dunn.test)
 dunn_results <- dunn.test(alpha_indexes_amr$Shannon, 
-          sample_data(ps_scaffolds_filtered)$City, 
+          sample_data(ps_amr_good)$City, 
           method="bh")
 ```
 
@@ -615,7 +623,7 @@ dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
 
 ```{r}
 dunn_results <- dunn.test(alpha_indexes_amr$InvSimpson, 
-          sample_data(ps_scaffolds_filtered)$City, 
+          sample_data(ps_amr_good)$City, 
           method="bh")
 ```
 
@@ -668,20 +676,106 @@ print(anova(beta))
 plot(beta)
 
 ```
-### Population Size
+
+#### SIAMCAT
+
+Using siamcat we look for genes that are explaining most of the variations by factor groups.
+
+```{r, tax_glom}
+library(SIAMCAT)
+relab_ps = transform_sample_counts(ps_scaffolds_filtered, function(x) x/sum(x))
+
+psglom = tax_glom(relab_ps, "ARG")
+```
+
+Define SIAMCAT analysis function
+
+```{r, siam_plots}
+create_siamcat_plot <- function(psg, label_column, case_value, output_prefix) {
+  # Create label
+  sc_label <- create.label(meta=sample_data(psg), label=label_column, case=case_value)
+  
+  # Create SIAMCAT object
+  siamcat_o <- siamcat(phyloseq=psg, label=sc_label)
+  
+  
+  # Filter features
+  siamcat_o <- filter.features(siamcat_o, filter.method='abundance', cutoff=1e-03)
+  siamcat_o <- filter.features(siamcat_o, filter.method='prevalence', cutoff=0.05, feature.type='filtered')
+  
+  # Check associations
+  siamcat_o <- check.associations(siamcat_o)
+  
+  association.plot(siamcat_o, panels=c("fc", "prevalence"), prompt = FALSE, verbose = 0)
+  # Final association plot
+  svg(paste0("../plots/",output_prefix, "_final_association.svg"), width=12, height=7)
+  association.plot(siamcat_o, panels=c("fc", "prevalence"), prompt = FALSE, verbose = 0)
+  dev.off()
+  cat("plot saved to", paste0(output_prefix, "_final_association.svg"), "\n")
+  
+  return(siamcat_o)
+}
+
+```
+
+Show differentialy abundat genes in a plotte
+
+```{r, assoc_hosp}
+label_case_pairs <- list(
+  list(label = "City", case = "Cesis"),
+  list(label = "City", case = "Dobele"),
+  list(label = "City", case = "Jelgava"),
+  list(label = "City", case = "Jurmala"),
+  list(label = "City", case = "Kuldiga"),
+  list(label = "City", case = "Liepāja"),
+  list(label = "City", case = "Madona"),
+  list(label = "City", case = "Salaspils"),
+  list(label = "City", case = "Saldus"),
+  list(label = "City", case = "Sigulda"),
+  list(label = "City", case = "Smiltene"),
+  list(label = "City", case = "Talsi"),
+  list(label = "City", case = "Tukums"),
+  list(label = "City", case = "Valmiera"),
+  list(label = "City", case = "Ventspils")
+)
+
+#psglom = tax_glom(relab_ps, "ARG")
+
+# Loop through the pairs
+for (pair in label_case_pairs) {
+  label_column <- pair$label
+  case_value <- pair$case
+  
+  # Create a unique output prefix for each pair
+  output_prefix <- paste0("siamcat_", label_column, "_", case_value)
+  
+  # Run the function
+  siamcat_result <- create_siamcat_plot(psglom, label_column, case_value, output_prefix)
+  
+  # You can do additional processing with siamcat_result here if needed
+  
+  volcano.plot(siamcat_result)
+    
+  print(rownames(associations(siamcat_result))[associations(siamcat_result)$p.adj<0.05])
+  # Print a message to indicate progress
+  cat("Completed processing for", label_column, "with case", case_value, "\n")
+}
+```
+
+## Population Size
 
 
-Now look wether population size impact AMR.
+Now look whether population size impact AMR.
 
 ```{r, kruskal_popul}
 
-kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_scaffolds_filtered)$Population)
-kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_scaffolds_filtered)$Population)
+kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_amr_good)$Population)
+kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_amr_good)$Population)
 
 ```
 
 ```{r, div_popul}
-plot_richness(ps_scaffolds_filtered, x="Population", title="AMR diversity", measures=c("InvSimpson", "Shannon"), nrow = 2, sortby = "InvSimpson") + 
+plot_richness(ps_amr_good, x="Population", title="AMR diversity", measures=c("InvSimpson", "Shannon"), nrow = 2, sortby = "InvSimpson") + 
     geom_boxplot() + 
     theme_bw() +
     theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))+
@@ -757,25 +851,47 @@ plot(beta)
 No significance in Regional Hospital.
 
 ```{r, wilconx_hosp}
-wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Regional_Hospital,
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_amr_good)$Regional_Hospital,
                      p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_amr$InvSimpson~sample_data(ps_scaffolds_filtered)$Regional_Hospital,
+wilcox.test(alpha_indexes_amr$InvSimpson~sample_data(ps_amr_good)$Regional_Hospital,
                      p.adjust.method = "BH")
 
 ```
+
 
 Hospital Types
 
 
 ```{r, kurskal_amr}
-kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_scaffolds_filtered)$Hospital_Type)
-kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_scaffolds_filtered)$Hospital_Type)
+kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_amr_good)$Hospital_Type)
+kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_amr_good)$Hospital_Type)
 ```
+
+Drug Class
+
+```{r, wilconx_hosp}
+alpha_indexes_dclass <- estimate_richness(physeq_drug_class, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+
+kruskal.test(alpha_indexes_dclass$Shannon~sample_data(physeq_drug_class)$Hospital_Type)
+
+kruskal.test(alpha_indexes_dclass$InvSimpson~sample_data(physeq_drug_class)$Hospital_Type)
+```
+
+AMR family
+
+```{r, wilconx_hosp}
+alpha_indexes_amr_family <- estimate_richness(physeq_amr_families, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+
+kruskal.test(alpha_indexes_amr_family$Shannon~sample_data(physeq_amr_families)$Hospital_Type)
+
+kruskal.test(alpha_indexes_amr_family$InvSimpson~sample_data(physeq_amr_families)$Hospital_Type)
+```
+
 
 ```{r, richness_h_type, echo=FALSE}
 # used for generating plots
-r1 <- plot_richness(ps_scaffolds_filtered, x = "Hospital_Type",
+r1 <- plot_richness(ps_amr_good, x = "Hospital_Type",
               measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") +
               geom_boxplot() + geom_point(size=1, alpha=0.5)  + labs(
     title = "AMR Hospital type diversity")  +
@@ -842,7 +958,7 @@ plot(beta)
 
 ```{r, dune_h_typ}
 dunn_results <- dunn.test(alpha_indexes_amr$Shannon, 
-          sample_data(ps_scaffolds_filtered)$Hospital_Type, 
+          sample_data(ps_amr_good)$Hospital_Type, 
           method="bh")
 ```
 
@@ -857,7 +973,7 @@ dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
 
 ```{r, dune_h}
 dunn_results <- dunn.test(alpha_indexes_amr$InvSimpson, 
-          sample_data(ps_scaffolds_filtered)$Hospital_Type, 
+          sample_data(ps_amr_good)$Hospital_Type, 
           method="bh")
 ```
 
@@ -960,7 +1076,7 @@ colnames(sample_data(ps_amr_CSS))[7:12]
 
 ```{r, kruskal}
 # remove NA values
-ps_amr_ww_impact = subset_samples(ps_scaffolds_filtered, sample_data(ps_scaffolds_filtered)$Industrial_wastewater_impact != "None")
+ps_amr_ww_impact = subset_samples(ps_amr_good, sample_data(ps_amr_good)$Industrial_wastewater_impact != "None")
 
 
 alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
@@ -983,7 +1099,7 @@ dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon,
 
 ```{r,kruskal_food}
 # remove NA values
-ps_amr_ww_impact = subset_samples(ps_scaffolds_filtered, sample_data(ps_scaffolds_filtered)$Industrial_wastewater_impact_from_food != "None")
+ps_amr_ww_impact = subset_samples(ps_amr_good, sample_data(ps_amr_good)$Industrial_wastewater_impact_from_food != "None")
 
 alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
 kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)

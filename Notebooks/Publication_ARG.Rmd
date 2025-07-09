@@ -25,7 +25,7 @@ For resistance gene annotations CARD database was used.
 ```{r, paths}
 CARDDB = "~/DB/CARD_02_2024/card.json"
 
-METADATA_PATH =  "../sampleMetadata.csv"
+xMETADATA_PATH =  "../sampleMetadata.csv"
 metadata <- read.csv(METADATA_PATH, header = TRUE, colClasses = c(Date = "character", Dairy_farming="character", Meat_production="character", Metal_processing="character", Washrooms="character"))
 
 ```
@@ -718,7 +718,7 @@ create_siamcat_plot <- function(psg, label_column, case_value, output_prefix) {
 
 ```
 
-Show differentialy abundat genes in a plotte
+Show differential abundat genes in a plotte
 
 ```{r, assoc_hosp}
 label_case_pairs <- list(

@@ -13,6 +13,19 @@ install.packages("igraph")
 install.packages("qgraph")
 install.packages("vegan")
 install.packages("MCL")
+
+# NetCoMi
+
+# Since two of NetCoMi's dependencies are only available on GitHub, 
+# it is recommended to install them first:
+devtools::install_github("zdk123/SpiecEasi")
+devtools::install_github("GraceYoon/SPRING")
+
+# Install NetCoMi
+devtools::install_github("stefpeschel/NetCoMi", 
+                         repos = c("https://cloud.r-project.org/",
+                                   BiocManager::repositories()))
+
 ```
 
 ```{r}
@@ -21,6 +34,7 @@ library(qgraph)
 library(vegan)
 library(MCL)
 library(SpiecEasi)
+library(NetCoMi)
 ```
 
 
@@ -169,16 +183,12 @@ net <- sparcc.net
 ```
 
 
-Hubs are nodes in the network that have a significantly larger
-number of links compared to the other nodes in the network. A
-hub in a microbiome network can be considered as an equiva-
-lent to a keystone species in the microbial community. Using
-centrality indices (closeness and betweenness below) to find
-keystone species will output a vector containing values between
-0 and 1 for every node in the network. Link-analysis methods
-(page_rank and hub_score below), on the other hand, will
-output an object in which there is a vector containing the values
-for the nodes.
+Hubs are nodes in the network that have a significantly larger number of links compared to the other nodes in the network. A
+hub in a microbiome network can be considered as an equivalent to a keystone species in the microbial community. Using
+centrality indices (closeness and betweenness below) to findkeystone species will output a vector containing values between
+0 and 1 for every node in the network. Link-analysis methods(page_rank and hub_score below), on the other hand, will
+output an object in which there is a vector containing the values for the nodes.
+
 
 ```{r}
 # Hub detection
@@ -384,6 +394,45 @@ layout = layout.fruchterman.reingold)
 ```
 
 
+## Differential Network analysis
 
+From: https://netcomi.de/articles/netcomi
+
+
+```{r}
+ww_genus <- tax_glom(ps_CSS, taxrank = "Species")
+```
+
+
+### Rename taxonomic table and make Rank6 (genus) unique
+
+```{r}
+ww_genus_renamed <- renameTaxa(ww_genus, 
+                                  pat = "<name>", 
+                                  substPat = "<name>_<subst_name>(<subst_R>)",
+                                  numDupli = "Species")
+
+```
+
+Network construction 
+
+```{r}
+net_spring <- netConstruct(ww_genus,
+                           taxRank = "Species",
+                           filtTax = "highestFreq",
+                           filtTaxPar = list(highestFreq = 50),
+                           filtSamp = "totalReads",
+                           filtSampPar = list(totalReads = 1000),
+                           measure = "City",
+                           measurePar = list(nlambda=10, 
+                                             rep.num=10,
+                                             Rmethod = "approx"),
+                           normMethod = "none", 
+                           zeroMethod = "none",
+                           sparsMethod = "none", 
+                           dissFunc = "signed",
+                           verbose = 2,
+                           seed = 123456)
+```
 
 

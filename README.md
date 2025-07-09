@@ -1,8 +1,36 @@
 # Latvian Waste water microbiome analysis
 
-Microbiome and metagenome analysis of Latvian waste-water data. Compositional, Diversity, co-occurrence and network analysis notebooks, r-code and input/output data.
+Microbiome and metagenome analysis of Latvian waste-water data.
+
+In this study were anlysed
+
+-   Tax composition
+
+-   Gene composition
+
+<!-- -->
+
+-   AMR in Plasmid
+
+-   AMR in MAGs
+
+-   Compositional and Diversity,
+
+-   co-occurrence
+
+-   network analysis notebooks.
+
+-   r-code and input/output data
+
+This Whole Metagenome Shotgun project has been deposited in ENA under the accession no. PRJEB79273 and metagenome assembled genome assemblies under the accession no. PRJEB80484.
 
 ## Pipeline
+
+Input from
+
+[**mobilome-annotation-pipeline**](https://github.com/EBI-Metagenomics/mobilome-annotation-pipeline) [**miassembler**](https://github.com/EBI-Metagenomics/miassembler)[**genomes-generation**](https://github.com/EBI-Metagenomics/genomes-generation)
+
+[**funcscan**](https://github.com/nf-core/funcscan)
 
 Inputs:
 
@@ -30,4 +58,6 @@ Notebooks:
 
 plots.
 
-exports.
+Renders.
+
+## Dependencies

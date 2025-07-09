@@ -1,0 +1,24 @@
+```{r}
+
+filename <- "~/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/sequencingData/motus/results_ERR13598958/taxonomy/LSU/ERR13598958_LSU.txt"
+
+LSU <- read.csv("~/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/sequencingData/motus/results_ERR13598958/taxonomy/LSU/ERR13598958_LSU.txt", sep="\t")
+
+
+LSU <- read_tsv(filename, 
+               col_types = cols())
+
+# Check the structure of the data
+str(LSU)
+library(data.table)
+LSU <- fread(filename, header=FALSE,fill=TRUE)
+ 
+# filter out V2 where value is sk__Archaea
+
+LSU <- LSU[!grepl("sk__Archaea", LSU$V2),]
+
+
+
+```
+
+

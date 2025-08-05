@@ -1,7 +1,7 @@
 ---
 title: "Wastewater microbiome in Latvia"
 author: "Edgars Liepa"
-date: "22/2/2025"
+date: "05/05/2025"
 output:
   pdf_document: default
   html_document: default
@@ -15,6 +15,7 @@ library("vegan")
 library("dplyr")
 suppressPackageStartupMessages(library(microViz))
 library("ggplot2")
+library(microbiomeMarker) # Note. install from github, not supported in newer bioconductor versions
 ```
 
 Load metadata
@@ -324,7 +325,7 @@ w_outliers <- plot_grid(
 
 ```
 
-```{r, save_tax_clean, echo=FALSE}
+```{r, save_tax_clean2, echo=FALSE}
 # Save as PNG
 ggsave("../plots/w_outliers.jpg", plot = w_outliers, width = 18, height = 8, units = "in", dpi = 1200)
 
@@ -914,7 +915,7 @@ alpha_beta_bact <- plot_grid(
   )
 ```
 
-```{r, save_nmds_plot, city, echo=FALSE}
+```{r, save_nmds_plot2, city, echo=FALSE}
 # Save as PNG
 ggsave("../plots/Figure_4.jpg", plot = alpha_beta_bact, width = 16, height = 8, units = "in", dpi = 1200)
 
@@ -1136,3 +1137,56 @@ print(adonis2_rez)
 }
 
 ```
+
+
+
+## Core Tax
+
+
+Show OTUs that are in 70% of the samples with abundance larger than and more than 0.001% relative abundance
+
+```{r}
+
+ps_bact_filtered@tax_table[microbiome::core_members(microbiomeMarker::normalize(ps_bact_filtered, method="TSS"), detection = 1/10000 , prevalence = 70/100)]
+
+```
+
+Core genes in Hospitals
+
+```{r}
+
+# Filter for hospital samples
+physeq_hospital <- subset_samples(ps_bact_filtered, Regional_Hospital == "yes")
+
+# Filter for non-hospital samples
+physeq_nonhospital <- subset_samples(ps_bact_filtered, Regional_Hospital == "no")
+
+
+# physeq_hospital@tax_table[microbiome::core_members(microbiomeMarker::normalize(physeq_hospital, method="TSS"), detection = 1/10000 , prevalence = 70/100)]
+# physeq_nonhospital@tax_table[microbiome::core_members(microbiomeMarker::normalize(physeq_nonhospital, method="TSS"), detection = 1/10000 , prevalence = 70/100)]
+
+core_hospital <- microbiome::core(physeq_hospital, detection=1, prevalence=0.7)
+
+# Core in non-hospital samples
+core_nonhospital <- microbiome::core(physeq_nonhospital, detection=1, prevalence=0.7)
+
+```
+
+```{r}
+# Extract core feature names
+hospital_core_genes <- taxa_names(core_hospital)
+nonhospital_core_genes <- taxa_names(core_nonhospital)
+
+# Compare (intersect, union, setdiff)
+shared_cores <- intersect(hospital_core_genes, nonhospital_core_genes)
+
+unique_hospital <- setdiff(hospital_core_genes, nonhospital_core_genes)
+unique_nonhospital <- setdiff(nonhospital_core_genes, hospital_core_genes)
+
+```
+
+
+```{r}
+physeq_nonhospital@tax_table[unique_hospital]
+```
+

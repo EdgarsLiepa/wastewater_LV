@@ -9,8 +9,12 @@ library("microViz")
 library(dplyr)
 library(ggplot2)
 library(phyloseq)
+library(purrr)
+
+library(tidyr)
 ```
 
+Load metadata
 
 ```{r}
 METADATA_PATH =  "../sampleMetadata.csv"
@@ -19,8 +23,571 @@ metadata <- read.csv(METADATA_PATH, header = TRUE, colClasses = c(Date = "charac
 rownames(metadata) <- metadata$ENA_assemblyID
 ```
 
+## FUNCSCAN plasmids MGEs
 
-## EBI
+AMR Genes found in plasmids from EBI mobilome-annotation-pipeline.
+
+Read genes with sequence_identity over 90%.
+
+
+```{r}
+
+funcscan_arg <- read.csv("../results/hamronization_combined_report_fixed_names.tsv", sep="\t", header = TRUE)  %>%
+    filter(sequence_identity >= 90)
+
+
+# add new colllumn with gene name and row ID to link with count data.
+funcscan_arg$gene_symbol_row <- paste0(funcscan_arg$gene_symbol, "_", 1:nrow(funcscan_arg))
+
+
+# Fix gene names with sort names
+funcscan_arg$gene_symbol <- paste0(
+  ifelse(nchar(funcscan_arg$gene_symbol) < 4, 
+         paste0(funcscan_arg$gene_symbol, "_gene"), 
+         funcscan_arg$gene_symbol)
+)
+
+# Show screening results table with gene positions in contigs
+funcscan_arg
+```
+
+
+Multiple genes have slight variations in gene names. That were fixed prior to importing.
+For example: erm(B), ERMB, ErmB are considered 3 separate genes, because each tool have some variation in names.
+
+
+
+```{r}
+# Show gene count
+sprintf("Unique Genes found: %i", length(sort(table(funcscan_arg$gene_symbol),decreasing = TRUE)))
+
+# Total Gene accourences
+sprintf("ARG locations in contigs: %i", sum(table(funcscan_arg$gene_symbol),decreasing = TRUE))
+
+```
+
+Genes Per Tool
+
+```{r}
+# Count per drug class
+sort(table(funcscan_arg$analysis_software_name),decreasing = TRUE)
+```
+
+
+Count per drug class
+
+```{r}
+head(sort(table(funcscan_arg$drug_class),decreasing = TRUE))
+```
+
+
+Plasmids with most gene hits.
+
+```{r}
+head(sort(table(funcscan_arg$input_sequence_id),decreasing = TRUE))
+
+funcscan_arg[funcscan_arg$input_sequence_id=="ERZ24875759.1194|plasmid-1:7927",]
+
+```
+
+Filter plasmids with more than one detection.
+
+```{r}
+a <- table(funcscan_arg$input_sequence_id)  > 5
+funcscan_arg[a,]
+
+
+result <- funcscan_arg %>%
+  group_by(input_sequence_id) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+result
+```
+
+
+Get RGI genes
+
+```{r}
+funcscan_arg[funcscan_arg$analysis_software_name =="rgi",]
+```
+
+
+Get unique gene names.
+```{r}
+unique(funcscan_arg$gene_symbol)
+```
+
+
+#### HTseq
+
+Load sequence read counts mapped to plasmid gene positions.
+
+```{r}
+
+result_path = "~/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/mges_ebi_resistance_counts/htseq_funcscan/"
+
+files <- list.files(path = result_path, 
+                     pattern = paste0("\\.", "csv", "$"), 
+                     full.names = TRUE)
+
+
+htseq_func <- files %>%
+    set_names(tools::file_path_sans_ext(basename(.))) %>%
+    map_dfr(~ {
+      df <- read.table(.x, header = FALSE, sep = "\t", stringsAsFactors = FALSE, 
+                      col.names = c("gene_id", "counts"))
+      # Remove the redundant colnames() line and df$sample assignment
+      df
+    }, .id = "sample") %>%
+    select(gene_id, sample, counts) %>%
+    tidyr::pivot_wider(names_from = sample, values_from = counts, values_fill = 0)
+
+# remove last rows 
+# Keep all rows except last 5
+htseq_func <- head(htseq_func, -5)
+```
+
+
+##### Create a phyloseq object
+
+```{r}
+
+rows <-  htseq_func$gene_id
+htseq_func <- select(htseq_func, -gene_id) #without id column 
+rownames(htseq_func) <- rows
+
+#tax_t <- data.frame(Tax = rownames(htseq_func), ARG = select(funcscan_arg, "gene_symbol"),analysis_software_name=select(funcscan_arg, "analysis_software_name"),drug_class=select(funcscan_arg, "drug_class") )
+#tax_t <- data.frame(Tax = rownames(htseq_func), ARG = rownames(htseq_func) )
+
+tax_t <- merge(funcscan_arg[c("gene_symbol","drug_class","input_sequence_id","gene_symbol_row")], as.data.frame(rownames(htseq_func)), by.y = "rownames(htseq_func)", by.x = "gene_symbol_row")
+
+# Specify exact order
+tax_t <- tax_t %>% select(gene_symbol,drug_class,input_sequence_id, gene_symbol_row)
+
+rownames(tax_t) <- tax_t$gene_symbol_row
+
+
+ARG_TAX <- tax_table(as.matrix(tax_t))
+
+
+ps_func_ht <- phyloseq(otu_table(htseq_func, taxa_are_rows = TRUE), sample_data(metadata), ARG_TAX)
+
+```
+
+Create a specific phyloseq object for drug classes.
+
+
+```{r}
+tax_t <- merge(funcscan_arg[c("gene_symbol","drug_class","input_sequence_id","gene_symbol_row")], as.data.frame(rownames(htseq_func)), by.y = "rownames(htseq_func)", by.x = "gene_symbol_row")
+# Specify exact order
+tax_t <- tax_t %>% select(drug_class, gene_symbol_row)
+
+rownames(tax_t) <- tax_t$gene_symbol_row
+
+
+ARG_TAX <- tax_table(as.matrix(tax_t))
+
+
+ps_drug_class <- phyloseq(otu_table(htseq_func, taxa_are_rows = TRUE), sample_data(metadata), ARG_TAX)
+
+
+ps_drug_class <- tax_glom(ps_func_ht, "drug_class")
+
+
+
+ps_drug_class <- ps_drug_class %>%
+ tax_fix(
+  min_length = 4,
+  unknowns = c(""),
+  sep = " ", anon_unique = TRUE,
+  suffix_rank = "classified"
+ )
+
+```
+
+
+```{r}
+phyloseq_validate(ps_drug_class, remove_undetected = TRUE)
+```
+
+
+##### Filtering
+
+
+```{r, filter_amr}
+# Less strict filterring option
+# remove singletons. 
+ps_scaffolds_filtered = phyloseq::filter_taxa(ps_func_ht, function(x) sum(x) > 0, prune=TRUE)
+
+```
+
+
+```{r}
+ps_aggregated <- tax_glom(ps_scaffolds_filtered, "gene_symbol")
+```
+
+
+```{r}
+phyloseq_validate(ps_scaffolds_filtered, remove_undetected = TRUE)
+```
+
+```{r}
+# Check results
+cat("Original taxa:", ntaxa(ps_func_ht), "\n")
+cat("Aggregated taxa:", ntaxa(ps_aggregated), "\n")
+```
+
+
+
+Lets see how many times samples size differs.
+
+```{r, diff_amr}
+max_difference = max(sample_sums(ps_scaffolds_filtered))/min(sample_sums(ps_scaffolds_filtered))
+
+# The max difference in sequencing depth between largest and smallest sample
+max_difference
+
+```
+
+
+
+
+
+##### compositional analysis
+
+```{r}
+
+## Aggregated genes with same name
+ps_func_ht %>%
+    ps_mutate(Group = factor(sample_data(ps_func_ht)$City)) %>%
+    comp_barplot(tax_level = "gene_symbol", 
+                 sample_order = rownames(sample_data(ps_func_ht)[order(sample_data(ps_func_ht)$Sample), ]), 
+                 n_taxa = 20, 
+                 label = "Sample")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+```
+
+
+```{r}
+## Show best mapped genes
+ps_drug_class %>%
+    ps_mutate(Group = factor(sample_data(ps_drug_class)$City)) %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "drug_class", 
+                 sample_order = rownames(sample_data(ps_drug_class)[order(sample_data(ps_drug_class)$Sample), ]), 
+                 n_taxa = 20, 
+                 label = "Sample")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+```
+
+
+
+```{r}
+
+ps_scaffolds_filtered %>%
+  tax_transform("clr", rank = "gene_symbol") %>%
+  comp_heatmap(tax_anno = taxAnnotation(
+    Prev. = anno_tax_prev(bar_width = 0.3, size = grid::unit(1, "cm")))
+  )
+```
+
+
+
+```{r}
+plot_richness(ps_aggregated, x="City", measures=c("InvSimpson", "Shannon"), nrow = 2, sortby = "Shannon") + 
+    geom_boxplot() + 
+    theme_bw() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))+
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 14),
+    legend.text = element_text(size = 19),
+    legend.title = element_text(size = 18)
+  ) 
+```
+
+
+
+
+```{r}
+results <- run_amr_diversity_analysis(
+  ps_object = ps_aggregated,
+  grouping_var = "Regional.Hospital",
+  measures = c("InvSimpson", "Shannon"),
+  analysis_name = "hospital_AMR_Analysis"
+)
+
+```
+
+
+```{r}
+# Access components
+results$plot  # The ggplot object
+results$kruskal_results$Shannon  # Kruskal-Wallis for Shannon
+results$dunn_results$Shannon  # Dunn's test for Shannon
+
+# Custom analysis with different parameters
+custom_results <- analyze_alpha_diversity(
+  ps_object = ps_amr_good,
+  grouping_var = "City",
+  measures = c("Shannon", "Simpson", "InvSimpson", "Chao1"),
+  plot_title = "Treatment Effect on AMR Diversity",
+  save_plots = TRUE,
+  output_dir = "./custom_plots/",
+  plot_name = "treatment_alpha_div"
+)
+
+# Print detailed summary
+print_alpha_diversity_summary(custom_results)
+
+# Extract only significant comparisons
+shannon_sig <- extract_significant_comparisons(
+  custom_results$dunn_results$Shannon, 
+  alpha = 0.01  # More stringent threshold
+)
+```
+
+
+
+```{r}
+alpha_indexes_amr <- estimate_richness(ps_aggregated, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+```
+
+```{r}
+kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_aggregated)$City)
+kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_aggregated)$City)
+```
+
+
+```{r}
+kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_aggregated)$Regional_Hospital)
+kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_aggregated)$Regional_Hospital)
+```
+
+```{r, dune_amr_shan}
+library(dunn.test)
+dunn_results <- dunn.test(alpha_indexes_amr$Shannon, 
+          sample_data(ps_aggregated)$City, 
+          method="bh")
+```
+
+
+### Feature counts
+
+```{r}
+
+result_path = "~/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/mges_ebi_resistance_counts/featurecounts_funcscan/"
+
+files <- list.files(path = result_path, 
+                     pattern = paste0("\\.", "csv", "$"), 
+                     full.names = TRUE)
+
+
+ft_func <- files %>%
+    set_names(tools::file_path_sans_ext(basename(.))) %>%
+    map_dfr(~ {
+      df <- read.table(.x, header = FALSE, sep = "\t", stringsAsFactors = FALSE, 
+                      col.names = c("gene_id", "counts"))
+      # Remove the redundant colnames() line and df$sample assignment
+      df
+    }, .id = "sample") %>%
+    select(gene_id, sample, counts) %>%
+    tidyr::pivot_wider(names_from = sample, values_from = counts, values_fill = 0)
+
+# remove last rows 
+# Keep all rows except last 5
+#ft_func <- head(htseq_func, -5)
+```
+
+
+Create a taxonomy description.
+
+```{r}
+bind_cols(select(ft_func, "gene_id"),select(funcscan_arg, "gene_symbol"),select(funcscan_arg, "analysis_software_name"),select(funcscan_arg, "drug_class"))
+```
+
+
+```{r}
+
+## TODO Need to change column names
+
+rows <-  ft_func$gene_id
+ft_func <- select(ft_func, -gene_id) #without id column 
+rownames(ft_func) <- rows
+
+
+tax_t <- data.frame(Tax = rownames(ft_func), ARG = select(funcscan_arg, "gene_symbol"),analysis_software_name=select(funcscan_arg, "analysis_software_name"),drug_class=select(funcscan_arg, "drug_class") )
+rownames(tax_t) <- tax_t$Tax
+
+# Or replace the original column
+# TODO there are genes wher specific gene is lost. _ is not in last position
+#tax_t$ARG <- str_remove(tax_t$ARG, "_.*")
+#tax_t <- tibble::column_to_rownames(tax_t, var = "Tax")
+ARG_TAX <- tax_table(as.matrix(tax_t))
+
+
+ps_func_ft <- phyloseq(otu_table(ft_func, taxa_are_rows = TRUE), sample_data(metadata), ARG_TAX)
+
+```
+
+```{r}
+
+## Show best mapped genes
+ps_func_ft %>%
+    ps_mutate(Group = factor(sample_data(ps_func_ft)$City)) %>%
+    tax_agg("gene_symbol", force=TRUE) %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "gene_symbol", 
+                 sample_order = rownames(sample_data(ps_func_ft)[order(sample_data(ps_func_ft)$Sample), ]), 
+                 n_taxa = 20, 
+                 label = "Sample")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+
+ps_func_ft %>%
+    ps_mutate(Group = factor(sample_data(ps_func_ft)$City)) %>%
+    tax_agg("drug_class", force=TRUE) %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "drug_class", 
+                 sample_order = rownames(sample_data(ps_func_ft)[order(sample_data(ps_func_ft)$Sample), ]), 
+                 n_taxa = 20, 
+                 label = "Sample")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+
+
+
+funcscan_arg[funcscan_arg$analysis_software_name =="rgi",]
+
+
+ps_func_ft %>% subset_taxa(analysis_software_name == "rgi")  %>% 
+    ps_mutate(Group = factor(sample_data(ps_func_ft)$City)) %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "Tax", 
+                 sample_order = rownames(sample_data(ps_func_ft)[order(sample_data(ps_func_ft)$Sample), ]), 
+                 n_taxa = 20, 
+                 label = "Sample")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+```
+```{r}
+# Extract tax_table for inspection
+tax_df <- as.data.frame(tax_table(ps_func_ft))
+
+# Debug: Check structure and content
+cat("=== Tax Table Debugging ===\n")
+cat("Tax table dimensions:", dim(tax_df), "\n")
+cat("Column names:", colnames(tax_df), "\n")
+cat("Unique analysis_software_name values:", unique(tax_df$analysis_software_name), "\n")
+
+# Case-insensitive filtering for RGI
+rgi_indices <- which(tolower(tax_df$analysis_software_name) == "rgi")
+cat("RGI entries found:", length(rgi_indices), "\n")
+
+# Filter phyloseq object maintaining structure
+ps_func_ft_rgi <- prune_taxa(taxa_names(ps_func_ft)[rgi_indices], ps_func_ft)
+
+# Validation
+cat("Original taxa count:", ntaxa(ps_func_ft), "\n")
+cat("RGI filtered taxa count:", ntaxa(ps_func_ft_rgi), "\n")
+
+```
+
+```{r}
+
+## Show best mapped genes
+ps_func_ft %>%
+    ps_mutate(Group = factor(sample_data(ps_func_ft)$City)) %>%
+    tax_agg("gene_symbol", force=TRUE) %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "gene_symbol", 
+                 sample_order = rownames(sample_data(ps_func_ft)[order(sample_data(ps_func_ft)$Sample), ]), 
+                 n_taxa = 20, 
+                 label = "Sample")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+
+ps_func_ft_rgi %>%
+    ps_mutate(Group = factor(sample_data(ps_func_ft_rgi)$City)) %>%
+    tax_agg("drug_class", force=TRUE) %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "drug_class", 
+                 sample_order = rownames(sample_data(ps_func_ft_rgi)[order(sample_data(ps_func_ft_rgi)$Sample), ]), 
+                 n_taxa = 20, 
+                 label = "Sample")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+
+ps_func_ft_rgi %>%
+    ps_mutate(Group = factor(sample_data(ps_func_ft_rgi)$City)) %>%
+    tax_agg("analysis_software_name", force=TRUE) %>%
+    ps_seriate(dist = "bray", method = "OLO_ward") %>%
+    comp_barplot(tax_level = "analysis_software_name", 
+                 sample_order = rownames(sample_data(ps_func_ft_rgi)[order(sample_data(ps_func_ft_rgi)$Sample), ]), 
+                 n_taxa = 20, 
+                 label = "Sample")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    facet_grid(~Group, scales = "free", space = "free")
+
+```
+
+
+Get reads only from one tool.
+
+```{r}
+tax_t_rgi <- tax_t[tax_t$analysis_software_name == "rgi", , drop = FALSE]
+ft_func_filtered <- ft_func[rownames(ft_func) %in% rownames(tax_t_rgi), , drop = FALSE]
+
+original_rownames <- rownames(ft_func)
+matching_indices <- rownames(ft_func) %in% rownames(tax_t_rgi)
+ft_func_filtered <- ft_func[matching_indices, , drop = FALSE]
+rownames(ft_func_filtered) <- original_rownames[matching_indices]
+
+ps_func_rgi <- phyloseq(otu_table(ft_func_filtered, taxa_are_rows = TRUE), sample_data(metadata), ARG_TAX)
+
+```
+
+
+
+```{r}
+
+ps_aggregated <- tax_glom(ps_func_ft, "ARG")
+
+# Check results
+cat("Original taxa:", ntaxa(ps_func_ft), "\n")
+cat("Aggregated taxa:", ntaxa(ps_aggregated), "\n")
+
+# View the aggregated tax table
+head(tax_table(ps_aggregated))
+
+alpha_indexes_amr <- estimate_richness(ps_aggregated, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+
+```
+
+
+```{r, wilconx_hosp}
+
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_aggregated)$Regional_Hospital,
+                     p.adjust.method = "BH")
+
+wilcox.test(alpha_indexes_amr$InvSimpson~sample_data(ps_aggregated)$Regional_Hospital,
+                     p.adjust.method = "BH")
+
+```
+
+
+## AMR Finder plasmids MGEs
 
 Genes found using AMRfinder in EBI/mobilome-annotation-pipeline
 
@@ -99,16 +666,12 @@ plasmid_arg %>% filter(gene_id == "DFDCDFID_49008")
 plasmid_arg[plasmid_arg$gene_id %in% "DFDCDFID_49008",]$ref_gene_name
 ```
 
-### AMR Finder plasmids MGEs
 
 Contigs Over > 1k bp were used for gene detection.
 
 #### HTseq
 
 ```{r}
-library(dplyr)
-library(purrr)
-library(tidyr)
 
 result_path = "~/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/mges_ebi_resistance_counts/htseq"
 
@@ -202,7 +765,6 @@ plasmid_arg <- plasmid_arg %>%
 
 
 ```{r}
-
 htseq_final
 
 tax_t <- plasmid_arg[,c("gene_id", "ref_gene_name", "class_summary", "ref_sequence_name", "location")]
@@ -219,379 +781,11 @@ rownames(htseq_df) <- htseq_df$gene_id
 ps_amr <- phyloseq(otu_table(as.data.frame(select(htseq_df, -gene_id)), taxa_are_rows = TRUE), sample_data(metadata))
 ```
 
-22
-#### Feature counts
-
-
-### FUNCSCAN plasmids MGEs
-
-AMR Genes found in plasmids from EBI mobilome-annotation-pipeline.
-
-
-Read genes with sequence_identity over 90%
-
-```{r}
-funcscan_arg <- read.csv("../results/hamronization_combined_report.tsv", sep="\t", header = TRUE)  %>%
-    filter(sequence_identity >= 90)
-```
-
-
-```{r}
-funcscan_arg
-```
-
-```{r}
-# Show gene count
-length(sort(table(funcscan_arg$gene_symbol),decreasing = TRUE))
-
-# Total Gene accourences
-sum(table(funcscan_arg$gene_symbol),decreasing = TRUE)
-
-```
-
-
-
-```{r}
-# Count per drug class
-sort(table(funcscan_arg$analysis_software_name),decreasing = TRUE)
-```
-
-
-
-```{r}
-# Count per drug class
-sort(table(funcscan_arg$drug_class),decreasing = TRUE)
-```
-
-
-
-```{r}
-# Plasmids with most gene hits.
-head(sort(table(funcscan_arg$input_sequence_id),decreasing = TRUE))
-```
-
-```{r}
-a <- table(funcscan_arg$input_sequence_id) > 1
-funcscan_arg$input_sequence_id[a]
-```
-
-
-
-```{r}
-funcscan_arg[funcscan_arg$input_sequence_id=="ERZ24875765.3449|plasmid-1:5657",]
-```
-
-```{r}
-funcscan_arg[funcscan_arg$analysis_software_name =="rgi",]
-```
-
-
-#### HTseq
-
-
-Load sequence counts mapped to gene positions.
-
-```{r}
-
-result_path = "~/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/mges_ebi_resistance_counts/htseq_funcscan/"
-
-files <- list.files(path = result_path, 
-                     pattern = paste0("\\.", "csv", "$"), 
-                     full.names = TRUE)
-
-
-htseq_func <- files %>%
-    set_names(tools::file_path_sans_ext(basename(.))) %>%
-    map_dfr(~ {
-      df <- read.table(.x, header = FALSE, sep = "\t", stringsAsFactors = FALSE, 
-                      col.names = c("gene_id", "counts"))
-      # Remove the redundant colnames() line and df$sample assignment
-      df
-    }, .id = "sample") %>%
-    select(gene_id, sample, counts) %>%
-    tidyr::pivot_wider(names_from = sample, values_from = counts, values_fill = 0)
-
-# remove last rows 
-# Keep all rows except last 5
-htseq_func <- head(htseq_func, -5)
-```
-
-
-
-```{r}
-
-## TODO Need to change column names
-
-rows <-  htseq_func$gene_id
-htseq_func <- select(htseq_func, -gene_id) #without id column 
-rownames(htseq_func) <- rows
-
-
-tax_t <- data.frame(Tax = rownames(htseq_func), ARG = rownames(htseq_func) )
-rownames(tax_t) <- tax_t$Tax
-
-# Or replace the original column
-# TODO there are genes wher specific gene is lost. _ is not in last position
-tax_t$ARG <- str_remove(tax_t$ARG, "_.*")
-
-ARG_TAX <- tax_table(as.matrix(tax_t[, c('ARG', 'Tax')]))
-
-
-ps_func_ht <- phyloseq(otu_table(htseq_func, taxa_are_rows = TRUE), sample_data(metadata), ARG_TAX)
-
-```
-
-```{r}
-
-ps_aggregated <- tax_glom(ps_func_ht, "ARG")
-
-
-# Check results
-cat("Original taxa:", ntaxa(ps_func_ht), "\n")
-cat("Aggregated taxa:", ntaxa(ps_aggregated), "\n")
-
-# View the aggregated tax table
-head(tax_table(ps_aggregated))
-```
-
-
-```{r}
-
-## Aggregated genes with same name
-ps_aggregated %>%
-    ps_mutate(Group = factor(sample_data(ps_aggregated)$Regional_Hospital)) %>%
-    ps_seriate(dist = "bray", method = "OLO_ward") %>%
-    comp_barplot(tax_level = "ARG", 
-                 sample_order = rownames(sample_data(ps_aggregated)[order(sample_data(ps_aggregated)$Sample), ]), 
-                 n_taxa = 20, 
-                 label = "Sample")+
-    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
-    facet_grid(~Group, scales = "free", space = "free")
-
-ps_func_ht %>%
-    ps_mutate(Group = factor(sample_data(ps_func_ht)$Regional_Hospital)) %>%
-    ps_seriate(dist = "bray", method = "OLO_ward") %>%
-    comp_barplot(tax_level = "ARG", 
-                 sample_order = rownames(sample_data(ps_func_ht)[order(sample_data(ps_func_ht)$Sample), ]), 
-                 n_taxa = 20, 
-                 label = "Sample")+
-    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
-    facet_grid(~Group, scales = "free", space = "free")
-
-
-
-## Show best mapped genes
-ps_func_ht %>%
-    ps_mutate(Group = factor(sample_data(ps_func_ht)$City)) %>%
-    ps_seriate(dist = "bray", method = "OLO_ward") %>%
-    comp_barplot(tax_level = "ARG", 
-                 sample_order = rownames(sample_data(ps_func_ht)[order(sample_data(ps_func_ht)$Sample), ]), 
-                 n_taxa = 20, 
-                 label = "Sample")+
-    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
-    facet_grid(~Group, scales = "free", space = "free")
-```
-
-```{r, filter_amr}
-# Less strict filterring option
-# remove singletons. 
-ps_scaffolds_filtered = phyloseq::filter_taxa(ps_aggregated, function(x) sum(x) > 1, prune=TRUE)
-```
-
-
-Lets see how many times samples size differs.
-
-```{r, diff_amr}
-max_difference = max(sample_sums(ps_scaffolds_filtered))/min(sample_sums(ps_scaffolds_filtered))
-
-# The max difference in sequencing depth between largest and smallest sample
-max_difference
-
-```
-
-
-```{r}
-plot_richness(ps_aggregated, x="City", measures=c("InvSimpson", "Shannon"), nrow = 2, sortby = "Shannon") + 
-    geom_boxplot() + 
-    theme_bw() +
-    theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))+
-  theme(
-    legend.position = "right",
-    axis.text.x = element_text(angle = 90, hjust = 1, size = 14),
-    axis.text.y = element_text(size = 14),
-    axis.title = element_text(size = 14),
-    legend.text = element_text(size = 19),
-    legend.title = element_text(size = 18)
-  ) 
-```
-
-
-```{r}
-results <- run_amr_diversity_analysis(
-  ps_object = ps_aggregated,
-  grouping_var = "Regional.Hospital",
-  measures = c("InvSimpson", "Shannon"),
-  analysis_name = "hospital_AMR_Analysis"
-)
-
-```
-
-
-```{r}
-# Access components
-results$plot  # The ggplot object
-results$kruskal_results$Shannon  # Kruskal-Wallis for Shannon
-results$dunn_results$Shannon  # Dunn's test for Shannon
-
-# Custom analysis with different parameters
-custom_results <- analyze_alpha_diversity(
-  ps_object = ps_amr_good,
-  grouping_var = "City",
-  measures = c("Shannon", "Simpson", "InvSimpson", "Chao1"),
-  plot_title = "Treatment Effect on AMR Diversity",
-  save_plots = TRUE,
-  output_dir = "./custom_plots/",
-  plot_name = "treatment_alpha_div"
-)
-
-# Print detailed summary
-print_alpha_diversity_summary(custom_results)
-
-# Extract only significant comparisons
-shannon_sig <- extract_significant_comparisons(
-  custom_results$dunn_results$Shannon, 
-  alpha = 0.01  # More stringent threshold
-)
-```
-
-
-
-```{r}
-alpha_indexes_amr <- estimate_richness(ps_aggregated, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
-```
-
-```{r}
-kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_aggregated)$City)
-kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_aggregated)$City)
-```
-
-
-```{r}
-kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_aggregated)$Regional_Hospital)
-kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_aggregated)$Regional_Hospital)
-```
-
-```{r, dune_amr_shan}
-library(dunn.test)
-dunn_results <- dunn.test(alpha_indexes_amr$Shannon, 
-          sample_data(ps_amr_good)$City, 
-          method="bh")
-```
-
-```{r}
-
-```
-
 
 
 #### Feature counts
 
-```{r}
 
-result_path = "~/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/mges_ebi_resistance_counts/featurecounts_funcscan/"
-
-files <- list.files(path = result_path, 
-                     pattern = paste0("\\.", "csv", "$"), 
-                     full.names = TRUE)
-
-
-ft_func <- files %>%
-    set_names(tools::file_path_sans_ext(basename(.))) %>%
-    map_dfr(~ {
-      df <- read.table(.x, header = FALSE, sep = "\t", stringsAsFactors = FALSE, 
-                      col.names = c("gene_id", "counts"))
-      # Remove the redundant colnames() line and df$sample assignment
-      df
-    }, .id = "sample") %>%
-    select(gene_id, sample, counts) %>%
-    tidyr::pivot_wider(names_from = sample, values_from = counts, values_fill = 0)
-
-# remove last rows 
-# Keep all rows except last 5
-#ft_func <- head(htseq_func, -5)
-```
-
-```{r}
-
-## TODO Need to change column names
-
-rows <-  ft_func$gene_id
-ft_func <- select(ft_func, -gene_id) #without id column 
-rownames(ft_func) <- rows
-
-
-tax_t <- data.frame(Tax = rownames(ft_func), ARG = rownames(ft_func), )
-rownames(tax_t) <- tax_t$Tax
-
-# Or replace the original column
-# TODO there are genes wher specific gene is lost. _ is not in last position
-tax_t$ARG <- str_remove(tax_t$ARG, "_.*")
-
-ARG_TAX <- tax_table(as.matrix(tax_t[, c('ARG', 'Tax')]))
-
-
-ps_func_ft <- phyloseq(otu_table(ft_func, taxa_are_rows = TRUE), sample_data(metadata), ARG_TAX)
-
-```
-
-```{r}
-ps_aggregated %>%
-    ps_mutate(Group = factor(sample_data(ps_aggregated)$Regional_Hospital)) %>%
-    ps_seriate(dist = "bray", method = "OLO_ward") %>%
-    comp_barplot(tax_level = "ARG", 
-                 sample_order = rownames(sample_data(ps_aggregated)[order(sample_data(ps_aggregated)$Sample), ]), 
-                 n_taxa = 20, 
-                 label = "Sample")+
-    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
-    facet_grid(~Group, scales = "free", space = "free")
-
-
-
-## Show best mapped genes
-ps_func_ft %>%
-    ps_mutate(Group = factor(sample_data(ps_func_ft)$City)) %>%
-    ps_seriate(dist = "bray", method = "OLO_ward") %>%
-    comp_barplot(tax_level = "ARG", 
-                 sample_order = rownames(sample_data(ps_func_ft)[order(sample_data(ps_func_ft)$Sample), ]), 
-                 n_taxa = 20, 
-                 label = "Sample")+
-    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
-    facet_grid(~Group, scales = "free", space = "free")
-```
-
-```{r}
-
-ps_aggregated <- tax_glom(ps_func_ft, "ARG")
-
-# Check results
-cat("Original taxa:", ntaxa(ps_func_ft), "\n")
-cat("Aggregated taxa:", ntaxa(ps_aggregated), "\n")
-
-# View the aggregated tax table
-head(tax_table(ps_aggregated))
-
-alpha_indexes_amr <- estimate_richness(ps_aggregated, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
-```
-
-
-```{r, wilconx_hosp}
-wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_aggregated)$Regional_Hospital,
-                     p.adjust.method = "BH")
-
-wilcox.test(alpha_indexes_amr$InvSimpson~sample_data(ps_aggregated)$Regional_Hospital,
-                     p.adjust.method = "BH")
-
-```
 
 
 ## Top Genes
@@ -604,7 +798,7 @@ wilcox.test(alpha_indexes_amr$InvSimpson~sample_data(ps_aggregated)$Regional_Hos
 
 ggplot(as.data.frame(sort(head(table(funcscan_arg$drug_class), n=20))), aes(y=Var1, x=Freq)) + 
   geom_bar(stat = "identity") +  # Turn off interactive
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12))
 ggplot(as.data.frame(sort(head(table(funcscan_arg$gene_symbol), n=20))), aes(y=Var1, x=Freq)) + 
   geom_bar(stat = "identity") +  # Turn off interactive
   theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12)) 
@@ -616,10 +810,63 @@ ggplot(as.data.frame(sort(head(table(funcscan_arg$gene_symbol), n=20))), aes(y=V
 
 ggplot(as.data.frame(sort(head(table(plasmid_arg[plasmid_arg$location != "chromosome",]$class_summary), n=20))), aes(y=Var1, x=Freq)) + 
   geom_bar(stat = "identity") +  # Turn off interactive
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12))
   ggplot(as.data.frame(sort(head(table(plasmid_arg[plasmid_arg$location != "chromosome",]$ref_gene_name), n=20))), aes(y=Var1, x=Freq)) + 
   geom_bar(stat = "identity") +  # Turn off interactive
   theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12))
 
 ```
+
+
+
+
+
+
+
+## Coverage
+
+```{r}
+
+depth_data <- read.table("../results/coverage_plasmids/ERZ24875791_assembly_depth.txt", 
+                        header = TRUE, 
+                        sep = "\t", 
+                        stringsAsFactors = FALSE)
+
+head(depth_data)
+summary(depth_data)
+dim(depth_data)
+```
+
+```{r}
+
+library(reshape2)
+
+# Calculate basic statistics
+coverage_stats <- depth_data %>%
+  select(-contigName, -contigLen) %>%
+  summary()
+
+print(coverage_stats)
+
+# Coverage distribution histogram
+coverage_long <- melt(depth_data, 
+                     id.vars = c("contigName", "contigLen"),
+                     variable.name = "Sample", 
+                     value.name = "Coverage")
+
+ggplot(coverage_long, aes(x = log10(Coverage + 1))) +
+  geom_histogram(bins = 50, alpha = 0.7) +
+  facet_wrap(~Sample) +
+  labs(title = "Coverage Distribution Across Samples",
+       x = "Log10(Coverage + 1)",
+       y = "Number of Contigs") +
+  theme_minimal()
+
+```
+
+
+
+
+
+
 

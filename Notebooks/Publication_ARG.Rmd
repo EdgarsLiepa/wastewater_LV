@@ -1,14 +1,19 @@
 ---
 title: "Wastewater AMR in Latvia"
 author: "Edgars Liepa"
-date: "26/03/2025"
+date: "14/08/2025"
 output:
   pdf_document: default
   toc: true
   toc_depth: 2
 ---
 
-```{r, lib, warning=FALSE}
+```{r}
+knitr::opts_chunk$set(dev = 'cairo_pdf', dpi = 300)
+```
+
+
+```{r, lib, warning=FALSE, results='hide'}
 library("phyloseq")
 library("vegan")
 library("dplyr")
@@ -25,8 +30,15 @@ For resistance gene annotations CARD database was used.
 ```{r, paths}
 CARDDB = "~/DB/CARD_02_2024/card.json"
 
-xMETADATA_PATH =  "../sampleMetadata.csv"
-metadata <- read.csv(METADATA_PATH, header = TRUE, colClasses = c(Date = "character", Dairy_farming="character", Meat_production="character", Metal_processing="character", Washrooms="character"))
+METADATA_PATH =  "../sampleMetadata.csv"
+metadata <- read.csv(METADATA_PATH, header = TRUE, 
+                     colClasses = c(Date = "character", 
+                                    Dairy_farming="character", 
+                                    Meat_production="character", 
+                                    Metal_processing="character", 
+                                    Washrooms="character"
+                                    )
+                     )
 
 ```
 
@@ -68,12 +80,16 @@ sample_names(ps_amr) <- name_mapping[sample_names(ps_amr)]
 
 Display count of AMR gene reads found in samples.
 
-```{r, plot_amr}
+```{r, plot_amr, warning=FALSE}
 
 plot_bar(ps_amr)
 
 options(repr.plot.width=4, repr.plot.height=4)
-hist(log10(sample_sums(ps_amr)), breaks=50, main="Sample size distribution", xlab="Sample size (log10)", ylab="Frequency", col="#007c80")
+hist(log10(sample_sums(ps_amr)), 
+     breaks=50, 
+     main="Sample size distribution", 
+     xlab="Sample size (log10)", 
+     ylab="Frequency", col="#007c80")
 
 ```
 ### Filtering 
@@ -85,7 +101,12 @@ Since we removed some samples from bacterial analysis, we have to remove them al
 ps_amr_good = subset_samples(ps_amr, sample_data(ps_amr)$Sample != "Salaspils.2")
 ps_amr_good = subset_samples(ps_amr_good, sample_data(ps_amr_good)$Sample != "Talsi.3")
 
-hist(log10(sample_sums(ps_amr_good)), breaks=50, main="Sample size distribution", xlab="Sample size (log10)", ylab="Frequency", col="#007c80")
+hist(log10(sample_sums(ps_amr_good)), 
+     breaks=50, 
+     main="Sample size distribution", 
+     xlab="Sample size (log10)", 
+     ylab="Frequency", 
+     col="#007c80")
 ```
 
 Now we remove singleton reads that are assigned to genes with only one aligned read across all samples.
@@ -111,8 +132,16 @@ max_difference
 Range of sample size in reconstructed samples.
 
 ```{r, amr_depth}
-boxplot(sample_sums(ps_scaffolds_filtered), main="Samples depth across samples removed singletons", xlab="", ylab="Number of reads", col="#a6093d")
-text(y=boxplot.stats(sample_sums(ps_scaffolds_filtered))$stats, labels=boxplot.stats(sample_sums(ps_scaffolds_filtered))$stats, x=1.25)
+boxplot(sample_sums(ps_scaffolds_filtered), 
+        main="Samples depth across samples removed singletons", 
+        xlab="", ylab="Number of reads", 
+        col="#a6093d")
+
+text(
+  y=boxplot.stats(sample_sums(ps_scaffolds_filtered))$stats,
+  labels=boxplot.stats(sample_sums(ps_scaffolds_filtered))$stats, 
+  x=1.25
+  )
 ```
 
 The dimensions of the filtered data
@@ -244,7 +273,8 @@ physeq_amr_categories %>%
                  sample_order = rownames(metadata[order(metadata$Sample), ]), 
                  n_taxa = 10, 
                  label = "Sample", interactive = TRUE) +
-    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")+
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), 
+          legend.position = "bottom")+
     facet_grid(~Group, scales = "free", space = "free")+
     labs(y = "Relative Abundance", fill = "AMR categories")
 ```
@@ -252,7 +282,7 @@ physeq_amr_categories %>%
 
 #### Drug Class
 
-```{r, drug_class_pl}
+```{r, drug_class_pl, warning=FALSE}
 physeq_drug_class %>%
     ps_mutate(Group = factor(sample_data(physeq_drug_class)$City)) %>%
     tax_agg("ARG") %>%
@@ -261,14 +291,15 @@ physeq_drug_class %>%
                  sample_order = rownames(metadata[order(metadata$Sample), ]), 
                  n_taxa = 10, 
                  label = "Sample", interactive = TRUE) +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "bottom")+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), 
+          legend.position = "bottom")+
     facet_grid(~Group, scales = "free", space = "free")
 
 ```
 
 #### AMR Families
 
-```{r, family_pl, fig.width=10, fig.height=4.5}
+```{r, family_pl, fig.width=10, fig.height=4.5, warning=FALSE}
 physeq_amr_families %>%
     ps_mutate(Group = factor(sample_data(physeq_amr_families)$City)) %>%
     tax_agg("ARG") %>%
@@ -289,7 +320,7 @@ physeq_amr_families %>%
 
 Combined plot for paper.
 
-```{r, combined_pl, fig.height=12, fig.width=14}
+```{r, combined_pl, fig.height=12, fig.width=14, warning=FALSE}
 
 # Plot 1 (physeq_drug_class - renamed for clarity)
 p1 <- physeq_drug_class %>%
@@ -383,9 +414,9 @@ plot_ordination(GP1, GP.ord2, type="taxa", color = "ARG", title="ARGs") + theme(
 
 Here we evaluate how sample size of reconstructed reads impacts the recall of ARGs using normalization by subsampling (rarefaction)
 
-Display rarefication curves.
+Display rarefaction curves.
 
-```{r, rare_curve_amr}
+```{r, rare_curve_amr, warning=FALSE}
 tab <- otu_table(ps_amr_good)
 class(tab) <- "matrix"
 tab <- t(tab)
@@ -411,7 +442,7 @@ Since individual sample curves showed good recall and samples sizes are not too 
 
 For beta diversity analysis normalization by cumulative sum scaling (CSS) was done to phyloseq object with singleton removed reads.
 
-```{r, css_amr}
+```{r, css_amr, results='hide'}
 ps_amr_CSS = microbiomeMarker::normalize(ps_scaffolds_filtered, method="CSS")
 ```
 
@@ -430,7 +461,10 @@ rownames(abu_table) <- tax_table$ARG
 mean_percentage <- apply(abu_table, 1, mean) * 100
 std_dev <- sqrt(apply(abu_table, 1, var)) * 100
 
-top_genes <- sort(mean_percentage, decreasing = TRUE) %>% head(n = 15) %>% as.data.frame %>% rownames
+top_genes <- sort(mean_percentage, decreasing = TRUE) %>% 
+  head(n = 15) %>% 
+  as.data.frame %>% 
+  rownames
 
 # Format output with both mean percentage and standard deviation
 formatted_output <- sapply(top_genes, function(gene) {
@@ -460,7 +494,10 @@ rownames(abu_table) <- tax_table$ARG
 mean_percentage <- apply(abu_table, 1, mean) * 100
 std_dev <- sqrt(apply(abu_table, 1, var)) * 100
 
-top_genes <- sort(mean_percentage, decreasing = TRUE) %>% head(n = 15) %>% as.data.frame %>% rownames
+top_genes <- sort(mean_percentage, decreasing = TRUE) %>% 
+  head(n = 15) %>% 
+  as.data.frame %>% 
+  rownames
 
 # Format output with both mean percentage and standard deviation
 formatted_output <- sapply(top_genes, function(gene) {
@@ -507,7 +544,7 @@ formatted_output
 
 Show most commonly affected drug classes.
 
-```{r}
+```{r, d_clas_proc}
 genes_transformed  = transform_sample_counts(physeq_amr_categories, function(x) x / sum(x) )
 
 
@@ -545,7 +582,10 @@ Exploring differences how AMR gene composition is affected by Municipality facto
 
 
 ```{r, plot_div_amr, fig.width=7.2, fig.height=6}
-alph_city <- plot_richness(ps_amr_good, x="City", measures=c("InvSimpson", "Shannon"), nrow = 2, sortby = "Shannon") + 
+alph_city <- plot_richness(ps_amr_good, x="City", 
+                           measures=c("InvSimpson", "Shannon"), 
+                           nrow = 2, 
+                           sortby = "Shannon") + 
     geom_boxplot() + 
     theme_bw() +
     theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))+
@@ -564,7 +604,7 @@ alph_city
 
 
 
-```{r_ save_div_amr, echo=FALSE}
+```{r, save_div_amr, echo=FALSE}
 # Save as PNG
 ggsave("../plots/arg_alpha_city_2.jpg", plot = alph_city, width = 8, height = 6, units = "in", dpi = 1200)
 
@@ -577,7 +617,9 @@ Calculate distance
 
 ```{r, fig.width=9, fig.height=5, text.width=10}
 # Calculate diversity indexes
-alpha_indexes_amr <- estimate_richness(ps_amr_good, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+alpha_indexes_amr <- estimate_richness(ps_amr_good, 
+                                       split = TRUE, 
+                                       c("Shannon", "Simpson", "InvSimpson"))
 
 kruskal.test(alpha_indexes_amr$Shannon ~ sample_data(ps_amr_good)$City)
 kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_amr_good)$City)
@@ -637,11 +679,14 @@ dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
 
 #### Beta diversity
 
-Lets compare how simmilar municipalities are between each other using bray-curtis distance on a NMDS plot.
+Lets compare how similar municipalities are between each other using bray-curtis distance on a NMDS plot.
 
 ```{r, beta_amr_city}
 GP.ord2 <- ordinate(ps_amr_CSS, "NMDS", "bray")
-p1 = plot_ordination(ps_amr_CSS, GP.ord2, type="samples", color = "City", title="City bray-distance NMDS")+
+p1 = plot_ordination(ps_amr_CSS, GP.ord2, 
+                     type="samples", 
+                     color = "City", 
+                     title="City bray-distance NMDS")+
  geom_polygon(aes(fill=City), alpha = 1/2) + geom_point(size=3)
 
 print(p1)
@@ -657,7 +702,9 @@ Lets check variance with ANOVA.
 
 ```{r, anova_amr}
 
-anosim(tax_bray_amr, sample_data(ps_amr_CSS)$City, distance = "bray", permutations = 999)
+anosim(tax_bray_amr, sample_data(ps_amr_CSS)$City, 
+       distance = "bray", 
+       permutations = 999)
 
 ```
 PERMANOVA
@@ -690,7 +737,7 @@ psglom = tax_glom(relab_ps, "ARG")
 
 Define SIAMCAT analysis function
 
-```{r, siam_plots}
+```{r, siam_plots_city}
 create_siamcat_plot <- function(psg, label_column, case_value, output_prefix) {
   # Create label
   sc_label <- create.label(meta=sample_data(psg), label=label_column, case=case_value)
@@ -718,7 +765,8 @@ create_siamcat_plot <- function(psg, label_column, case_value, output_prefix) {
 
 ```
 
-Show differential abundat genes in a plotte
+
+Show differentialy abundant genes in a plot
 
 ```{r, assoc_hosp}
 label_case_pairs <- list(
@@ -765,7 +813,7 @@ for (pair in label_case_pairs) {
 ## Population Size
 
 
-Now look whether population size impact AMR.
+Now look if population size impacts AMR.
 
 ```{r, kruskal_popul}
 
@@ -860,7 +908,7 @@ wilcox.test(alpha_indexes_amr$InvSimpson~sample_data(ps_amr_good)$Regional_Hospi
 ```
 
 
-Hospital Types
+Now we calculate if Hospital Type has an effect. 
 
 
 ```{r, kurskal_amr}
@@ -870,8 +918,10 @@ kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_amr_good)$Hospital_Ty
 
 Drug Class
 
-```{r, wilconx_hosp}
-alpha_indexes_dclass <- estimate_richness(physeq_drug_class, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+```{r, wilconx_hosp_class}
+alpha_indexes_dclass <- estimate_richness(physeq_drug_class, 
+                                          split = TRUE, 
+                                          c("Shannon", "Simpson", "InvSimpson"))
 
 kruskal.test(alpha_indexes_dclass$Shannon~sample_data(physeq_drug_class)$Hospital_Type)
 
@@ -880,8 +930,10 @@ kruskal.test(alpha_indexes_dclass$InvSimpson~sample_data(physeq_drug_class)$Hosp
 
 AMR family
 
-```{r, wilconx_hosp}
-alpha_indexes_amr_family <- estimate_richness(physeq_amr_families, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+```{r, wilconx_hosp_family}
+alpha_indexes_amr_family <- estimate_richness(physeq_amr_families, 
+                                              split = TRUE, 
+                                              c("Shannon", "Simpson", "InvSimpson"))
 
 kruskal.test(alpha_indexes_amr_family$Shannon~sample_data(physeq_amr_families)$Hospital_Type)
 
@@ -891,41 +943,41 @@ kruskal.test(alpha_indexes_amr_family$InvSimpson~sample_data(physeq_amr_families
 
 ```{r, richness_h_type, echo=FALSE}
 # used for generating plots
-r1 <- plot_richness(ps_amr_good, x = "Hospital_Type",
-              measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") +
-              geom_boxplot() + geom_point(size=1, alpha=0.5)  + labs(
-    title = "AMR Hospital type diversity")  +
-    theme(
-        axis.text.x = element_text(angle = 90, hjust = 1, size = 18),
-        axis.ticks.x = element_blank(),
-        strip.text = element_text(size = 18),
-        axis.text.y = element_text(size = 18),
-        title = element_text(size = 22)
-  )
-
-r2 <- plot_richness(ps_bact_filtered_species, x = "Hospital_Type",
-              measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") +
-              geom_boxplot() + geom_point(size=1, alpha=0.5)   + labs(
-    title = "Species Hospital type diversity")+
-  theme(
-        axis.text.x = element_text(angle = 90, hjust = 1, size = 18), # Smaller x-axis text
-        axis.ticks.x = element_blank(),
-        axis.text.y = element_text(size = 18),
-        strip.text = element_text(size = 18),
-        legend.position = "right",
-        title = element_text(size = 22)
-  )
-
-
-r_plot <- r1 + r2
-
-r_plot
+# r1 <- plot_richness(ps_amr_good, x = "Hospital_Type",
+#               measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") +
+#               geom_boxplot() + geom_point(size=1, alpha=0.5)  + labs(
+#     title = "AMR Hospital type diversity")  +
+#     theme(
+#         axis.text.x = element_text(angle = 90, hjust = 1, size = 18),
+#         axis.ticks.x = element_blank(),
+#         strip.text = element_text(size = 18),
+#         axis.text.y = element_text(size = 18),
+#         title = element_text(size = 22)
+#   )
+# 
+# r2 <- plot_richness(ps_bact_filtered_species, x = "Hospital_Type",
+#               measures=c("Shannon", "InvSimpson"), nrow = 2, sortby = "Shannon") +
+#               geom_boxplot() + geom_point(size=1, alpha=0.5)   + labs(
+#     title = "Species Hospital type diversity")+
+#   theme(
+#         axis.text.x = element_text(angle = 90, hjust = 1, size = 18), # Smaller x-axis text
+#         axis.ticks.x = element_blank(),
+#         axis.text.y = element_text(size = 18),
+#         strip.text = element_text(size = 18),
+#         legend.position = "right",
+#         title = element_text(size = 22)
+#   )
+# 
+# 
+# r_plot <- r1 + r2
+# 
+# r_plot
 ```
 
 ```{r, save_hosp_rich, echo=FALSE}
 
 # # Save as PNG
-ggsave("../plots/arg_alpha_hospital.jpg", plot = r_plot, width = 24, height = 12, units = "in", dpi = 1200)
+# ggsave("../plots/arg_alpha_hospital.jpg", plot = r_plot, width = 24, height = 12, units = "in", dpi = 1200)
 # 
 # # Save as SVG
 # ggsave("../plots/arg_alpha_hospital.svg", plot = r_plot, width = 24, height = 12, units = "in")
@@ -934,7 +986,10 @@ ggsave("../plots/arg_alpha_hospital.jpg", plot = r_plot, width = 24, height = 12
 
 ```{r, beta_h_type}
 GP.ord2 <- ordinate(ps_amr_CSS, "NMDS", "bray")
-p1 = plot_ordination(ps_amr_CSS, GP.ord2, type="samples", color = "Hospital_Type", title="Hospital_Type bray-distance NMDS")+
+p1 = plot_ordination(ps_amr_CSS, 
+                     GP.ord2, type="samples", 
+                     color = "Hospital_Type",
+                     title="Hospital_Type bray-distance NMDS")+
  stat_ellipse(aes(linetype = Regional_Hospital, colour = Regional_Hospital)) + geom_point(size=3)
 
 print(p1)
@@ -956,7 +1011,7 @@ plot(beta)
 ```
 
 
-```{r, dune_h_typ}
+```{r, dune_h_typ_dun}
 dunn_results <- dunn.test(alpha_indexes_amr$Shannon, 
           sample_data(ps_amr_good)$Hospital_Type, 
           method="bh")
@@ -971,7 +1026,7 @@ dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
 ```
 
 
-```{r, dune_h}
+```{r, dune_h_alpha}
 dunn_results <- dunn.test(alpha_indexes_amr$InvSimpson, 
           sample_data(ps_amr_good)$Hospital_Type, 
           method="bh")
@@ -990,44 +1045,17 @@ dunn_results$comparisons[dunn_results$P.adjusted < 0.05]
 
 Using siamcat we look for genes that are explaining most of the variations by factor groups.
 
-```{r, tax_glom}
+```{r, tax_gh}
 library(SIAMCAT)
 relab_ps = transform_sample_counts(ps_scaffolds_filtered, function(x) x/sum(x))
 
 psglom = tax_glom(relab_ps, "ARG")
 ```
 
-```{r, siam_plots}
-create_siamcat_plot <- function(psg, label_column, case_value, output_prefix) {
-  # Create label
-  sc_label <- create.label(meta=sample_data(psg), label=label_column, case=case_value)
-  
-  # Create SIAMCAT object
-  siamcat_o <- siamcat(phyloseq=psg, label=sc_label)
-  
-  
-  # Filter features
-  siamcat_o <- filter.features(siamcat_o, filter.method='abundance', cutoff=1e-03)
-  siamcat_o <- filter.features(siamcat_o, filter.method='prevalence', cutoff=0.05, feature.type='filtered')
-  
-  # Check associations
-  siamcat_o <- check.associations(siamcat_o)
-  
-  association.plot(siamcat_o, panels=c("fc", "prevalence"), prompt = FALSE, verbose = 0)
-  # Final association plot
-  svg(paste0("../plots/",output_prefix, "_final_association.svg"), width=12, height=7)
-  association.plot(siamcat_o, panels=c("fc", "prevalence"), prompt = FALSE, verbose = 0)
-  dev.off()
-  cat("plot saved to", paste0(output_prefix, "_final_association.svg"), "\n")
-  
-  return(siamcat_o)
-}
 
-```
+Here are most differentially abundant genes
 
-Here most differentially found genes are plotted
-
-```{r, assoc_hosp}
+```{r, assoc_hospt}
 label_case_pairs <- list(
   list(label = "Hospital_Type", case = "0"),
   list(label = "Hospital_Type", case = "2"),
@@ -1076,10 +1104,15 @@ colnames(sample_data(ps_amr_CSS))[7:12]
 
 ```{r, kruskal}
 # remove NA values
-ps_amr_ww_impact = subset_samples(ps_amr_good, sample_data(ps_amr_good)$Industrial_wastewater_impact != "None")
+ps_amr_ww_impact = subset_samples(ps_amr_good, 
+                    sample_data(ps_amr_good)$Industrial_wastewater_impact != "None")
 
 
-alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, 
+                                             split = TRUE, 
+                                             c("Shannon", "Simpson", "InvSimpson"))
+
+
 kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact)
 kruskal.test(alpha_indexes_ww_impact$Simpson ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact)
 ```
@@ -1101,7 +1134,11 @@ dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon,
 # remove NA values
 ps_amr_ww_impact = subset_samples(ps_amr_good, sample_data(ps_amr_good)$Industrial_wastewater_impact_from_food != "None")
 
-alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+alpha_indexes_ww_impact <- estimate_richness(ps_amr_ww_impact, 
+                           split = TRUE, 
+                           c("Shannon", "Simpson", "InvSimpson"))
+
+
 kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
 kruskal.test(alpha_indexes_ww_impact$Simpson ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
 ```
@@ -1120,23 +1157,31 @@ dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon,
 Municipalities were classefied by Dairy_farming, Meat_production, Metal_processing and car washing facilites connected to wastewater system. 
 
 
-```{r}
-wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Dairy_farming, p.adjust.method = "BH")
+```{r, wilconx_bin}
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Dairy_farming,
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Meat_production, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Meat_production,
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Metal_processing, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Metal_processing,
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Washrooms, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_amr$Shannon~sample_data(ps_scaffolds_filtered)$Washrooms, 
+            p.adjust.method = "BH")
 ```
 ```{r, wilcox_sipm}
-wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Dairy_farming, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Dairy_farming,
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Meat_production, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Meat_production,
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Metal_processing, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Metal_processing,
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Washrooms, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Washrooms, 
+            p.adjust.method = "BH")
 ```
 
 ### Beta diversity industry
@@ -1148,10 +1193,13 @@ wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Washroo
 # https://deneflab.github.io/MicrobeMiseq/demos/mothur_2_phyloseq.html
 
 # remove NAs
-ps_amr_ww_impact = subset_samples(ps_amr_CSS, sample_data(ps_amr_CSS)$Industrial_wastewater_impact != "None")
+ps_amr_ww_impact = subset_samples(ps_amr_CSS, 
+                              sample_data(ps_amr_CSS)$Industrial_wastewater_impact != "None")
+
 tax_bray_ww <- phyloseq::distance(ps_amr_ww_impact, method = "bray")
 
 adonis2_rez<-adonis2(tax_bray_ww ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact)
+
 print(adonis2_rez)
 ```
 
@@ -1161,7 +1209,8 @@ From Food
 
 ```{r, PERMANOVA2}
 # remove NAs
-ps_amr_ww_impact = subset_samples(ps_amr_CSS, sample_data(ps_amr_CSS)$Industrial_wastewater_impact_from_food != "None")
+ps_amr_ww_impact = subset_samples(ps_amr_CSS,
+                  sample_data(ps_amr_CSS)$Industrial_wastewater_impact_from_food != "None")
 
 tax_bray_ww <- phyloseq::distance(ps_amr_ww_impact, method = "bray")
 
@@ -1172,8 +1221,10 @@ print(adonis2_rez)
 metadata_col = colnames(sample_data(ps_amr_CSS))[9:12]
 ```
 
-```{r}
-beta <- betadisper(tax_bray_ww, sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
+```{r, disp_beta}
+beta <- betadisper(tax_bray_ww, 
+                   sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
+
 print(anova(beta))
 plot(beta)
 ```
@@ -1201,3 +1252,66 @@ print(adonis2_rez)
 
 ```
 
+
+## Overlapping core genes
+
+
+Show OTUs that are in 70% of the samples with abundance larger than and more than 0.001% relative abundance
+
+```{r, core}
+
+ps_amr_good@tax_table[microbiome::core_members(ps_amr_good, detection = 1 , prevalence = 70/100)]
+
+```
+
+Find core genes in cities with regional hospitals
+
+```{r, core_genes2}
+
+# Filter for hospital samples
+arg_hospital <- subset_samples(ps_amr_good, Regional_Hospital == "yes")
+
+# Filter for non-hospital samples
+arg_nonhospital <- subset_samples(ps_amr_good, Regional_Hospital == "no")
+
+core_arg_hospital <- microbiome::core(arg_hospital, detection=1, prevalence=70/100)
+
+# Core in non-hospital samples
+core_arg_nonhospital <- microbiome::core(arg_nonhospital, detection=1, prevalence=70/100)
+
+```
+
+
+Find non overlapping genes between cities with and without regional hospital 
+
+```{r, core_genes3}
+# Extract core feature names
+hospital_core_genes <- taxa_names(core_arg_hospital)
+nonhospital_core_genes <- taxa_names(core_arg_nonhospital)
+
+# Compare (intersect, union, setdiff)
+shared_cores <- intersect(hospital_core_genes, nonhospital_core_genes)
+
+unique_hospital <- setdiff(hospital_core_genes, nonhospital_core_genes)
+unique_nonhospital <- setdiff(nonhospital_core_genes, hospital_core_genes)
+
+```
+
+
+Intersection of genes shared in cities with and without regional hospitals
+
+```{r, shared_arg}
+as.data.frame(arg_hospital@tax_table[shared_cores][,"Tax"])
+```
+
+genes in cities with regional hospitals that are unique to group
+
+```{r, hospital_arg}
+as.data.frame(arg_hospital@tax_table[unique_hospital][,"Tax"])
+```
+
+genes in cities without regional hospitals that are unique to group
+
+```{r, nonhospital_arg}
+as.data.frame(arg_hospital@tax_table[unique_nonhospital][,"Tax"])
+```

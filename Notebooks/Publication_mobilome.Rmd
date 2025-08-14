@@ -1,0 +1,254 @@
+---
+title: "Wastewater ARGs in plasmids"
+author: "Edgars Liepa"
+date: "15/08/2025"
+output:
+  pdf_document: default
+  html_document: default
+---
+Notebook with the results of plasmid and MAG ARGS detected in wastewater data from funcscan results.
+
+```{r,lib}
+library("microViz")
+library(dplyr)
+library(ggplot2)
+library(phyloseq)
+library(purrr)
+library(tidyr)
+library(stringr)
+```
+
+Load metadata
+
+```{r, meta}
+METADATA_PATH =  "../sampleMetadata.csv"
+metadata <- read.csv(METADATA_PATH, header = TRUE, colClasses = c(Date = "character", Dairy_farming="character", Meat_production="character", Metal_processing="character", Washrooms="character"))
+
+rownames(metadata) <- metadata$ENA_assemblyID
+```
+
+## FUNCSCAN plasmids MGEs
+
+AMR Genes found in plasmids from EBI mobilome-annotation-pipeline.
+
+Read genes with sequence_identity over 90%.
+
+For hamronization_combined_report_fixed_names.tsv gene names were manually fixed to normilse gene names between different tools
+
+
+```{r, funcscan}
+
+funcscan_arg <- read.csv("../results/hamronization_combined_report_fixed_names.tsv", sep="\t", header = TRUE)  %>%
+    filter(sequence_identity >= 90)
+
+
+# add new colllumn with gene name and row ID to link with count data.
+funcscan_arg$gene_symbol_row <- paste0(funcscan_arg$gene_symbol, "_", 1:nrow(funcscan_arg))
+
+
+# Fix gene names with sort names
+funcscan_arg$gene_symbol <- paste0(
+  ifelse(nchar(funcscan_arg$gene_symbol) < 4, 
+         paste0(funcscan_arg$gene_symbol, "_gene"), 
+         funcscan_arg$gene_symbol)
+)
+
+```
+
+
+```{r, unique}
+# Show gene count
+sprintf("Unique Genes found: %i", length(sort(table(funcscan_arg$gene_symbol),decreasing = TRUE)))
+
+# Total Gene accourences
+sprintf("ARG locations in contigs: %i", sum(table(funcscan_arg$gene_symbol),decreasing = TRUE))
+
+```
+
+Genes Per Tool
+
+```{r}
+# Count per drug class
+sort(table(funcscan_arg$analysis_software_name),decreasing = TRUE)
+```
+
+
+Count per drug class
+
+```{r}
+head(sort(table(funcscan_arg$drug_class),decreasing = TRUE))
+```
+
+
+Plasmids with most gene hits.
+
+```{r}
+head(sort(table(funcscan_arg$input_sequence_id),decreasing = TRUE))
+
+funcscan_arg[funcscan_arg$input_sequence_id=="ERZ24875759.1194|plasmid-1:7927",]
+
+```
+
+Filter plasmids with more than one detection.
+
+```{r}
+a <- table(funcscan_arg$input_sequence_id)  > 5
+
+funcscan_arg[a,]
+
+
+result <- funcscan_arg %>%
+  group_by(input_sequence_id) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+result
+```
+
+
+
+Get count of unique gene names.
+
+```{r}
+length(unique(funcscan_arg$gene_symbol))
+```
+
+
+
+## FUNCSCAN MAGs
+
+AMR Genes found in plasmids from EBI genome generation pipeline.
+
+Read genes with sequence_identity over 90%
+
+```{r, read}
+MAG_arg <- read.csv("../results/hamronization_MAGs_report.tsv", sep="\t", header = TRUE)  %>%
+    filter(sequence_identity >= 90)
+
+MAG_tax <- read.csv("../results/MAGS_tax.txt", sep="\t", header = TRUE)
+```
+
+```{r, clean}
+
+MAG_arg$input_file_name <- str_remove(MAG_arg$input_file_name, "\\..*")
+
+```
+
+```{r, elements}
+# Show gene count
+length(sort(table(MAG_arg$gene_symbol),decreasing = TRUE))
+
+# Total Gene accourences
+sum(table(MAG_arg$gene_symbol),decreasing = TRUE)
+
+```
+
+```{r, pertool_counts}
+# Counts per tool
+sort(table(MAG_arg$analysis_software_name),decreasing = TRUE)
+```
+
+
+
+```{r, unique_genes}
+
+sprintf("Unique Genes found: %i", length(sort(table(MAG_arg$gene_symbol),decreasing = TRUE)))
+
+```
+
+
+
+```{r, toolCounts}
+Card_counts <- sort(table(MAG_arg$input_file_name),decreasing = TRUE)
+
+
+merge(as.data.frame(Card_counts), 
+      MAG_tax[MAG_tax$Genome.ID %in% names(Card_counts),
+              c("Genome.ID","GTDB.classification")], 
+      by.x = "Var1", 
+      by.y = "Genome.ID")[,c("Freq", "GTDB.classification")]
+
+
+
+sort(table(MAG_arg$input_file_name[MAG_arg$reference_database_name == "NCBI Reference Gene Database"]),decreasing = TRUE)
+
+
+sort(table(MAG_arg$input_file_name[MAG_arg$reference_database_name == "CARD"]),decreasing = TRUE)
+
+sort(table(MAG_arg$input_file_name),decreasing = TRUE)
+```
+
+
+## Plasmid and MAG intersection
+
+```{r, intersect}
+length(intersect(unique(funcscan_arg$gene_symbol),unique(MAG_arg$gene_symbol)))
+intersect <- intersect(unique(funcscan_arg$gene_symbol),unique(MAG_arg$gene_symbol))
+
+print(intersect)
+```
+
+
+Fet drug class counts for genes overlapping in plasmids and MAGs
+
+```{r, overlap}
+
+# Count to how many drug class occurrences are in 
+
+drug_class_count_list <- list()
+
+for(gene in intersect){
+  print(unique(funcscan_arg[funcscan_arg$gene_symbol %in% gene,]$drug_class))
+  
+  
+  for(class in unique(funcscan_arg[funcscan_arg$gene_symbol %in% gene,]$drug_class)){
+    
+    # Check if drug class already exists in our counting list
+    if(class %in% names(drug_class_count_list)){
+      
+      # Yes - increment count by 1
+      drug_class_count_list[[class]] <- drug_class_count_list[[class]] + 1
+      
+    } else {
+      
+      # No - add new drug class to list with initial count of 1
+      drug_class_count_list[[class]] <- 1
+      
+    }
+    
+  }
+  
+}
+
+print(drug_class_count_list)
+
+```
+
+
+count all gene oocurances 
+
+```{r, oocurances}
+sort(table(funcscan_arg[funcscan_arg$gene_symbol %in% intersect,]$drug_class))
+```
+
+
+
+Find genes that are in plasmids but not in MAGs 
+
+```{r, setdiff}
+length(setdiff(unique(funcscan_arg$gene_symbol),unique(MAG_arg$gene_symbol)))
+
+diff <-setdiff(unique(funcscan_arg$gene_symbol),unique(MAG_arg$gene_symbol))
+
+
+print(diff)
+
+```
+
+Find genes that are in MAGs but not in plasmids
+
+```{r, setdiff2}
+length(setdiff(unique(MAG_arg$gene_symbol),unique(funcscan_arg$gene_symbol)))
+setdiff(unique(MAG_arg$gene_symbol),unique(funcscan_arg$gene_symbol))
+```
+

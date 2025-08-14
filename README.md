@@ -2,11 +2,11 @@
 
 Microbiome and metagenome analysis of Latvian waste-water data.
 
-In this study were anlysed
+In this study were analysed microbiome
 
 -   Tax composition
 
--   Gene composition
+-   Antibiotic resistance gene diversity
 
 <!-- -->
 
@@ -16,10 +16,6 @@ In this study were anlysed
 
 -   Compositional and Diversity,
 
--   co-occurrence
-
--   network analysis notebooks.
-
 -   r-code and input/output data
 
 This Whole Metagenome Shotgun project has been deposited in ENA under the accession no. PRJEB79273 and metagenome assembled genome assemblies under the accession no. PRJEB80484.
@@ -28,7 +24,9 @@ This Whole Metagenome Shotgun project has been deposited in ENA under the access
 
 Input from
 
-[**mobilome-annotation-pipeline**](https://github.com/EBI-Metagenomics/mobilome-annotation-pipeline) [**miassembler**](https://github.com/EBI-Metagenomics/miassembler)[**genomes-generation**](https://github.com/EBI-Metagenomics/genomes-generation)
+[*kraken-biom*](https://github.com/smdabdoub/kraken-biom)
+
+[**mobilome-annotation-pipeline**](https://github.com/EBI-Metagenomics/mobilome-annotation-pipeline) [**miassembler**](https://github.com/EBI-Metagenomics/miassembler) [**genomes-generation**](https://github.com/EBI-Metagenomics/genomes-generation)
 
 [**funcscan**](https://github.com/nf-core/funcscan)
 
@@ -38,11 +36,11 @@ Inputs:
 
 -   RGI (*Resistance_genes/AMR_genes_RGI_scaffolds_filtered.csv*)
 
--   FuncScan (*results/hamronization_combined_report.tsv*)
+-   FuncScan (*results/hamronization_combined_report_fixed_names.tsv* and *results/hamronization_MAGs_report.tsv*)
 
 -   MobileElements ( *results/all_amr_locations.tsv* )
 
--   Tax data (*taxspecies.txt)*
+-   Taxonomy data (*waste_water.biome*)
 
 Notebooks:
 
@@ -50,14 +48,10 @@ Notebooks:
 
 -   [Publication.Rmd](Notebooks/Publication.Rmd)
 
--   [Plasmids.Rmd](Notebooks/Plasmids.Rmd)
-
--   [coOcurance.Rmd](Notebooks/coOcurance.Rmd)
+-   [Publication_mobilome.RMD](Notebooks/Publication_mobilome.RMD)
 
 ## Results
 
 plots.
 
 Renders.
-
-## Dependencies

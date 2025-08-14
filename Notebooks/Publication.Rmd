@@ -1,21 +1,25 @@
 ---
 title: "Wastewater microbiome in Latvia"
 author: "Edgars Liepa"
-date: "05/05/2025"
+date: "14/08/2025"
 output:
   pdf_document: default
   html_document: default
 ---
 
+This is a code for analysis of Kraken2 results of wastewater microbiome data from short read meatgenomic sequencing.
+
+
 Lets start with loading necessary libraries.
 
-```{r, lib, warning=FALSE}
+```{r, lib, warning=FALSE, echo=FALSE}
 library("phyloseq")
 library("vegan")
 library("dplyr")
 suppressPackageStartupMessages(library(microViz))
 library("ggplot2")
 library(microbiomeMarker) # Note. install from github, not supported in newer bioconductor versions
+library(cowplot)
 ```
 
 Load metadata
@@ -23,7 +27,13 @@ Load metadata
 ```{r, paths}
 
 METADATA_PATH =  "../sampleMetadata.csv"
-metadata <- read.csv(METADATA_PATH, header = TRUE, colClasses = c(Date = "character", Dairy_farming="character", Meat_production="character", Metal_processing="character", Washrooms="character"))
+metadata <- read.csv(METADATA_PATH, 
+                     header = TRUE, 
+                     colClasses = c(Date = "character", 
+                                    Dairy_farming="character", 
+                                    Meat_production="character", 
+                                    Metal_processing="character", 
+                                    Washrooms="character"))
 
 ```
 
@@ -33,13 +43,26 @@ Read summarized Kraken2 report biome file that was generated with [*kraken-biom*
 
 ### reading sequencing rads
 
+
+```{r, echo=FALSE, results='hide'}
+BIOMFILE="/home/edgars.liepa/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/kraken_res/waste_water.biome"
+```
+
+
 ```{r, read_kraken_res}
-merged_metagenomes <- import_biom("/home/edgars.liepa/NAS/bioinfo/edgars.liepa/Antibiotic_resistance/ww_publication/kraken_res/waste_water.biome")
+
+merged_metagenomes <- import_biom(BIOMFILE)
 
 # Clean Tax names
 merged_metagenomes@tax_table@.Data <- substring(merged_metagenomes@tax_table@.Data, 4)
 # Set collumn names
-colnames(merged_metagenomes@tax_table@.Data)<- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+colnames(merged_metagenomes@tax_table@.Data)<- c("Kingdom", 
+                                                 "Phylum", 
+                                                 "Class", 
+                                                 "Order", 
+                                                 "Family", 
+                                                 "Genus", 
+                                                 "Species")
 
 # Fix Sample names
 sample_names(merged_metagenomes) <- gsub("_k2_report$", "", sample_names(merged_metagenomes))
@@ -77,10 +100,14 @@ plot_bar(merged_metagenomes)
 Histogram of sample size distribution. We can see that one sample is cleare outlier
 
 ```{r, hist_mg}
-hist(log10(sample_sums(merged_metagenomes)), breaks=50, main="Sample size distribution", xlab="Sample size (log10)", ylab="Frequency", col="#007c80")
+hist(log10(sample_sums(merged_metagenomes)), 
+     breaks=50, 
+     main="Sample size distribution", 
+     xlab="Sample size (log10)", ylab="Frequency", 
+     col="#007c80")
 ```
 
-```{r, save_hist_tax, include = FALSE}
+```{r, save_hist_tax, include = FALSE, echo=FALSE}
 # save plot
 
 png("../plots/histogram_tax.png", width = 4.24, height = 4.86, units = "in", res = 300)
@@ -116,10 +143,19 @@ Remove samples based on sample size distribution and outlier event on Salspils.2
 ps_good = subset_samples(merged_metagenomes, sample_data(merged_metagenomes)$Sample != "Salaspils.2")
 ps_good = subset_samples(ps_good, sample_data(ps_good)$Sample != "Talsi.3")
 
-hist(log10(sample_sums(ps_good)), breaks=50, main="Sample size distribution", xlab="Sample size (log10)", ylab="Frequency", col="#007c80")
+hist(log10(sample_sums(ps_good)), 
+     breaks=50, 
+     main="Sample size distribution",
+     xlab="Sample size (log10)", ylab="Frequency", 
+     col="#007c80")
 
-boxplot(sample_sums(ps_good), main="Sequencing depth across samples remove singletons", xlab="", ylab="Number of reads", col="#a6093d")
-text(y=boxplot.stats(sample_sums(ps_good))$stats, labels=boxplot.stats(sample_sums(ps_good))$stats, x=1.25)
+boxplot(sample_sums(ps_good), 
+        main="Sequencing depth across samples remove singletons", 
+        xlab="", ylab="Number of reads", 
+        col="#a6093d")
+
+text(y=boxplot.stats(sample_sums(ps_good))$stats, 
+     labels=boxplot.stats(sample_sums(ps_good))$stats, x=1.25)
 ```
 
 Difference between samples with largest and smallest sample deapth.
@@ -183,7 +219,11 @@ seq_dropped_percentage
 
 options(repr.plot.width=4, repr.plot.height=5)
 
-boxplot(sample_sums(ps_bact_filtered), main="Sequencing depth across samples remove singletons", xlab="", ylab="Number of reads", col="#a6093d")
+boxplot(sample_sums(ps_bact_filtered), 
+        main="Sequencing depth across samples remove singletons", 
+        xlab="",
+        ylab="Number of reads", col="#a6093d")
+
 text(y=boxplot.stats(sample_sums(ps_bact_filtered))$stats, labels=boxplot.stats(sample_sums(ps_bact_filtered))$stats, x=1.25)
 ```
 
@@ -232,7 +272,8 @@ ps_bact_filtered_genus %>%
     tax_agg("Genus") %>%
     ps_seriate(dist = "bray", method = "OLO_ward") %>%
     comp_barplot(tax_level = "Genus", 
-                 sample_order = sample_data(ps_bact_filtered_genus)[order(sample_data(ps_bact_filtered_genus)$Sample), ]$Sample, 
+                 sample_order = sample_data(ps_bact_filtered_genus)
+                 [order(sample_data(ps_bact_filtered_genus)$Sample), ]$Sample, 
                  n_taxa = 10, 
                  label = "Sample", interactive = TRUE) +
     theme(legend.position = "bottom", axis.text.x = element_text(angle = 90, hjust = 1))+
@@ -263,7 +304,8 @@ species_all_samples <- ps_bact_filtered_species %>%
   ps_seriate(dist = "bray", method = "OLO_ward") %>%
   comp_barplot(
     tax_level = "Genus_species",
-    sample_order = sample_data(ps_bact_filtered_species)[order(sample_data(ps_bact_filtered_species)$Sample), ]$Sample,
+    sample_order = sample_data(ps_bact_filtered_species)
+    [order(sample_data(ps_bact_filtered_species)$Sample), ]$Sample,
     n_taxa = 10,
     label = "Sample",
     interactive = FALSE
@@ -295,8 +337,8 @@ ggsave("../plots/species_all_samples_barplot.svg", plot = species_all_samples, w
 
 Diagram for publication.
 
-```{r}
-library(cowplot)
+```{r, comb_pot, warning=FALSE}
+
 sample_sizes <- log10(sample_sums(merged_metagenomes))
   
   # Create the histogram using ggplot2
@@ -310,7 +352,7 @@ p1 <- ggplot(data.frame(size = sample_sizes), aes(x = size)) +
           plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"))
 
 
-species_all_samples
+# species_all_samples
 
 
 w_outliers <- plot_grid(
@@ -322,7 +364,7 @@ w_outliers <- plot_grid(
     rel_widths = c(0.75, 2)  # Adjust relative heights as needed
   )
 
-
+w_outliers
 ```
 
 ```{r, save_tax_clean2, echo=FALSE}
@@ -380,6 +422,8 @@ ps_bact_filtered_species %>%
 
 ### Most abundant organisms
 
+In this section lets take a look at specific genera and species dominating latvian microbiome.
+
 #### Genus
 
 ```{r, genera_count}
@@ -405,7 +449,10 @@ species_abundance <- data.frame(
 
 species_abundance <- data.frame(
     Species = c(
-        "Arcobacter", "Aeromonas", "Bacteroides", "Acinetobacter", "Lactobacillus", "Lactococcus", "Pseudoarcobacter", "Pseudomonas" , "Cloacibacterium", "Raoultella"
+        "Arcobacter", "Aeromonas", "Bacteroides", 
+        "Acinetobacter", "Lactobacillus", "Lactococcus", 
+        "Pseudoarcobacter", "Pseudomonas" , 
+        "Cloacibacterium", "Raoultella"
     )
 )
 
@@ -437,9 +484,11 @@ std_dev <- sqrt(apply(abu_table, 1, var)) * 100
 
 # Select genera of interest
 genus_abundance <- data.frame(
-  Genus = c("Arcobacter", "Aeromonas", "Bacteroides", "Acinetobacter", "Citrobacter","Escherichia", "Enterobacter", 
-                     "Lactobacillus", "Lactococcus", "Pseudoarcobacter", 
-                     "Pseudomonas", "Cloacibacterium", "Raoultella", "Klebsiella")
+  Genus = c("Arcobacter", "Aeromonas", "Bacteroides", 
+            "Acinetobacter", "Citrobacter","Escherichia", 
+            "Enterobacter", "Lactobacillus", "Lactococcus", 
+            "Pseudoarcobacter", "Pseudomonas", "Cloacibacterium", 
+            "Raoultella", "Klebsiella")
 )
 
 genus_abundance$mean_percentage <- sapply(genus_abundance$Genus, function(genus)
@@ -570,7 +619,9 @@ Calculate the mean relative abundance and standard deviation of the top 15 speci
 
 ```{r, top_tax2}
 
-genus_transformed  = transform_sample_counts(ps_bact_filtered_species, function(x) x / sum(x) )
+genus_transformed  = transform_sample_counts(ps_bact_filtered_species, 
+                                             function(x) x / sum(x) )
+
 abu_table <- as.data.frame(otu_table(genus_transformed))
 tax_table <- as.data.frame(tax_table(genus_transformed))
 species_names <- tax_table$Genus_species
@@ -579,7 +630,10 @@ rownames(abu_table) <- tax_table$Genus_species
 mean_percentage <- apply(abu_table, 1, mean) * 100
 std_dev <- sqrt(apply(abu_table, 1, var)) * 100
 
-top_species <- sort(mean_percentage, decreasing = TRUE) %>% head(n = 15) %>% as.data.frame %>% rownames
+top_species <- sort(mean_percentage, decreasing = TRUE) %>% 
+  head(n = 15) %>% 
+  as.data.frame %>% 
+  rownames
 
 # Format output with both mean percentage and standard deviation
 formatted_output <- sapply(top_species, function(species) {
@@ -648,6 +702,7 @@ sapply(species_abundance["Species"], function(species) {
 })
 ```
 
+Arcobacter_cryaerophilus
 
 ```{r, species_outliers2, warning=FALSE}
 sample_df <- data.frame(
@@ -666,6 +721,8 @@ ggplot(sample_df, aes(x=as.factor(city), y=value))+geom_bar(stat = "identity")+
 
 print(abu_table["Arcobacter_cryaerophilus",]*100)
 ```
+
+Cloacibacterium_normanense
 
 ```{r, species_outliers3, warning=FALSE}
 sample_df <- data.frame(
@@ -712,6 +769,7 @@ print(
 )
 ```
 
+Lactococcus_raffinolactis
 
 ```{r, lacto_plot, warning=FALSE}
 
@@ -822,7 +880,9 @@ ggsave("../plots/richness_bact.svg", plot = alpha_plot, width = 6, height = 6, u
 Use Kruskal Wallis test to check if differences between municipality Shannon and InvSimpson indexes are significant.
 
 ```{r, kruskal_city}
-alpha_indexes_bact <- estimate_richness(ps_bact_filtered, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+alpha_indexes_bact <- estimate_richness(ps_bact_filtered, 
+                                        split = TRUE, 
+                                        c("Shannon", "Simpson", "InvSimpson"))
 
 kruskal.test(alpha_indexes_bact$Shannon ~ sample_data(ps_bact_filtered)$City)
 kruskal.test(alpha_indexes_bact$InvSimpson ~ sample_data(ps_bact_filtered)$City)
@@ -905,8 +965,7 @@ ggsave("../plots/nmds_beta.svg", plot = p1, width = 12, height = 8, units = "in"
 ```
 
 
-```{r}
-
+```{r, publication plot, echo=FALSE, results='hide'}
 alpha_beta_bact <- plot_grid(
     alpha_plot, p1,
     labels = c("a", "b"),
@@ -1034,9 +1093,11 @@ Industrial_wastewater_impact significance:
 
 ```{r, Kruskal_industry}
 
-ps_tax_ww_impact = subset_samples(ps_bact_filtered, sample_data(ps_bact_filtered)$Industrial_wastewater_impact != "None")
+ps_tax_ww_impact = subset_samples(ps_bact_filtered, 
+                    sample_data(ps_bact_filtered)$Industrial_wastewater_impact != "None")
 
-alpha_indexes_ww_impact <- estimate_richness(ps_tax_ww_impact, split = TRUE, c("Shannon", "Simpson", "InvSimpson"))
+alpha_indexes_ww_impact <- estimate_richness(ps_tax_ww_impact, split = TRUE, 
+                                             c("Shannon", "Simpson", "InvSimpson"))
 
 kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_tax_ww_impact)$Industrial_wastewater_impact)
 
@@ -1064,24 +1125,32 @@ dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon,
 ```
 
 ```{r, wilcox_industry_bact}
-wilcox.test(alpha_indexes_ww_impact$Shannon~sample_data(ps_tax_ww_impact)$Dairy_farming, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_ww_impact$Shannon~sample_data(ps_tax_ww_impact)$Dairy_farming, 
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_ww_impact$Shannon~sample_data(ps_tax_ww_impact)$Meat_production, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_ww_impact$Shannon~sample_data(ps_tax_ww_impact)$Meat_production, 
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_ww_impact$Shannon~sample_data(ps_tax_ww_impact)$Metal_processing, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_ww_impact$Shannon~sample_data(ps_tax_ww_impact)$Metal_processing, 
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_ww_impact$Shannon~sample_data(ps_tax_ww_impact)$Washrooms, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_ww_impact$Shannon~sample_data(ps_tax_ww_impact)$Washrooms,
+            p.adjust.method = "BH")
 ```
 
 ```{r, wilxon_simp}
 
-wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Dairy_farming, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Dairy_farming, 
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Meat_production, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Meat_production, 
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Metal_processing, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Metal_processing, 
+            p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Washrooms, p.adjust.method = "BH")
+wilcox.test(alpha_indexes_ww_impact$Simpson~sample_data(ps_tax_ww_impact)$Washrooms, 
+            p.adjust.method = "BH")
 ```
 
 
@@ -1143,36 +1212,44 @@ print(adonis2_rez)
 ## Core Tax
 
 
-Show OTUs that are in 70% of the samples with abundance larger than and more than 0.001% relative abundance
+Show how many OTUs are in 70% of the samples with abundance larger than and more than 0.01% relative abundance
 
-```{r}
+```{r, core}
 
-ps_bact_filtered@tax_table[microbiome::core_members(microbiomeMarker::normalize(ps_bact_filtered, method="TSS"), detection = 1/10000 , prevalence = 70/100)]
-
+dim(as.data.frame(ps_bact_filtered@tax_table
+                  [microbiome::core_members(microbiomeMarker::normalize(ps_bact_filtered, 
+                                                                                method="TSS"), 
+                                                    detection = 1/10000 , prevalence = 70/100)]))
 ```
 
 Core genes in Hospitals
 
-```{r}
+
+```{r, filter_hospitals}
 
 # Filter for hospital samples
-physeq_hospital <- subset_samples(ps_bact_filtered, Regional_Hospital == "yes")
+physeq_hospital <- subset_samples(ps_bact_filtered, 
+                                  Regional_Hospital == "yes")
 
 # Filter for non-hospital samples
-physeq_nonhospital <- subset_samples(ps_bact_filtered, Regional_Hospital == "no")
+physeq_nonhospital <- subset_samples(ps_bact_filtered, 
+                                     Regional_Hospital == "no")
 
 
-# physeq_hospital@tax_table[microbiome::core_members(microbiomeMarker::normalize(physeq_hospital, method="TSS"), detection = 1/10000 , prevalence = 70/100)]
-# physeq_nonhospital@tax_table[microbiome::core_members(microbiomeMarker::normalize(physeq_nonhospital, method="TSS"), detection = 1/10000 , prevalence = 70/100)]
+### We employ extra normalisation to transform absolute values to relative with TSS scalling.
 
-core_hospital <- microbiome::core(physeq_hospital, detection=1, prevalence=0.7)
+core_hospital <- microbiome::core(microbiomeMarker::normalize(physeq_hospital, 
+                                                              method="TSS"),
+                                  detection=1/10000, prevalence=70/100)
 
 # Core in non-hospital samples
-core_nonhospital <- microbiome::core(physeq_nonhospital, detection=1, prevalence=0.7)
+core_nonhospital <- microbiome::core(microbiomeMarker::normalize(physeq_nonhospital, 
+                                                                 method="TSS"), 
+                                     detection=1/10000, prevalence=70/100)
 
 ```
 
-```{r}
+```{r, find_core}
 # Extract core feature names
 hospital_core_genes <- taxa_names(core_hospital)
 nonhospital_core_genes <- taxa_names(core_nonhospital)
@@ -1185,8 +1262,13 @@ unique_nonhospital <- setdiff(nonhospital_core_genes, hospital_core_genes)
 
 ```
 
+Print core taxa unique to hospital samples
 
-```{r}
-physeq_nonhospital@tax_table[unique_hospital]
+```{r, hospital_core}
+physeq_nonhospital@tax_table[unique_hospital][,c("Genus","Species")]
 ```
+
+
+
+
 

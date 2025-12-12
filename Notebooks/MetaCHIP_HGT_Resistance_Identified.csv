@@ -1,0 +1,6 @@
+Gene_1,Gene_2,Identity,occurence(pcofg),end_match,full_length_match,direction,Gene_1_ARG,Gene_1_Class,Gene_2_ARG,Gene_2_Class
+ERR13598959_binner12_Refined_3_01133,ERR13598981_concoct_53_01221,78,10000,no,no,ERR13598959_binner12_Refined_3-->ERR13598981_concoct_53,Mycobacterium tuberculosis rpsL mutations conferring resistance to Streptomycin,AMINOGLYCOSIDE,NA,NA
+ERR13598969_binner12_Refined_40_01140,ERR13598998_binner13_Refined_41_01030,75.67,00100,no,no,ERR13598969_binner12_Refined_40-->ERR13598998_binner13_Refined_41,UGD,peptide,UGD,peptide
+ERR13598969_binner12_Refined_40_01214,ERR13598975_maxbin2_6_02024,75.71,00010,no,no,ERR13598969_binner12_Refined_40-->ERR13598975_maxbin2_6,ROSB,fosmidomycin,NA,NA
+ERR13598969_binner12_Refined_40_01863,ERR13598998_binner13_Refined_41_01030,76.446,00100,no,no,ERR13598969_binner12_Refined_40-->ERR13598998_binner13_Refined_41,UGD,peptide,UGD,peptide
+ERR13598984_binner123_Refined_42_01704,ERR13598975_maxbin2_6_02024,75.568,00100,no,no,ERR13598984_binner123_Refined_42-->ERR13598975_maxbin2_6,ROSB,fosmidomycin,NA,NA

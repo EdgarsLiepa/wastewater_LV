@@ -156,7 +156,7 @@ sprintf("Unique Genes found: %i", length(sort(table(MAG_arg$gene_symbol),decreas
 
 ```
 
-
+ARGs found in genomes and bins.
 
 ```{r, toolCounts}
 Card_counts <- sort(table(MAG_arg$input_file_name),decreasing = TRUE)
@@ -189,7 +189,7 @@ print(intersect)
 ```
 
 
-Fet drug class counts for genes overlapping in plasmids and MAGs
+Get drug class counts for genes overlapping in plasmids and MAGs
 
 ```{r, overlap}
 

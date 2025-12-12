@@ -7,7 +7,7 @@ output:
   html_document: default
 ---
 
-This is a code for analysis of Kraken2 results of wastewater microbiome data from short read meatgenomic sequencing.
+This is a code for analysis of Kraken2 results of wastewater microbiome data from short read metagenomic sequencing.
 
 
 Lets start with loading necessary libraries.
@@ -1187,7 +1187,7 @@ PERMANOVA test for industrial variables.
 set.seed(7)
 
 # take rest of the variables that we are looking at
-metadata_col = colnames(sample_data(ps_CSS))[9:12]
+metadata_col = colnames(sample_data(ps_CSS))[9:13]
 
 
 for (param in metadata_col){

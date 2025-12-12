@@ -626,12 +626,11 @@ kruskal.test(alpha_indexes_amr$InvSimpson ~ sample_data(ps_amr_good)$City)
 
 ```
 
-
 Kruskal-Wallis rank sum test show significant differences in overall AMR diversity (Shannon)
 but dont show significant differences in how specific AMR dominate between cities (InvSimpson).
 
 
-Lets show minimal and maximux diversity values.
+Lets show minimal and maximum diversity values.
 
 ```{r, min_max}
 min(alpha_indexes_amr$InvSimpson)
@@ -640,9 +639,9 @@ min(alpha_indexes_amr$Shannon)
 max(alpha_indexes_amr$Shannon)
 ```
 
-Dunes Test 
+##### Dunes Test 
 
-pinpoint which specific means are significantlt different from the others
+pinpoint which specific means are significant different from the others
 
 ```{r, dune_amr_shan}
 library(dunn.test)
@@ -704,7 +703,7 @@ Lets check variance with ANOVA.
 
 anosim(tax_bray_amr, sample_data(ps_amr_CSS)$City, 
        distance = "bray", 
-       permutations = 999)
+       permutations = 9999)
 
 ```
 PERMANOVA
@@ -838,11 +837,29 @@ plot_richness(ps_amr_good, x="Population", title="AMR diversity", measures=c("In
 
 ```
 
+```{r, plot_beta_pop}
+beta <- betadisper(tax_bray_amr, group=sample_data(ps_amr_CSS)$Population, type = "centroid")
+print("BETADISPER")
+print("Population")
+print(anova(beta))
+
+plot(beta)
+
+adonis2_rez<-adonis2(tax_bray_amr ~ as.factor(sample_data(ps_amr_CSS)$Population), data=tax_bray_amr, permutations = 9999)
+print(adonis2_rez)
+
+```
+
+
 ```{r, plot_pop}
+
+
 beta_popul <- ps_scaffolds_filtered %>%
   dist_calc(dist = "bray", binary = TRUE) %>%
-  ord_calc("NMDS") %>%
-  ord_plot(
+  ord_calc("NMDS")
+
+beta_plot <- ord_plot(
+    beta_popul,
     color = "Population", 
     shape = "City", 
     size = 5,
@@ -854,7 +871,7 @@ beta_popul <- ps_scaffolds_filtered %>%
   scale_color_brewer(palette = "Set1") +
   scale_fill_brewer(palette = "Set1") +
   labs(
-    title = "NMDS of Population Profiles",
+    title = "NMDS of ARG Profiles",
     x = "NMDS1",
     y = "NMDS2"
   )+
@@ -868,31 +885,41 @@ beta_popul <- ps_scaffolds_filtered %>%
   ) 
 
 
-beta_popul
+beta_popul@ord$stress
+beta_plot
 ```
+
+```{r}
+library(cowplot)
+
+alpha_beta_arg <- plot_grid(
+    alph_city, beta_plot,
+    labels = c("a", "b"),
+    label_size = 16,
+     rel_widths = c(1, 1.5)
+  ) + draw_figure_label(
+      label=paste('PERMANOVA p = ',round(adonis2_rez$`Pr(>F)`[1], 3), " R2 = ", round(adonis2_rez$R2[1], 3)),
+      position = "top.right") +
+  draw_figure_label(
+      label=paste('BETADISP p = ',),
+      position = "top.right")
+```
+
 
 ```{r, save_plot_nmds_pop, echo=FALSE}
 # Save as PNG
-ggsave("../plots/arg_beta_pop.png", plot = beta_popul, width = 10, height = 8, units = "in", dpi = 300)
+# ggsave("../plots/arg_beta_pop.png", plot = beta_popul, width = 10, height = 8, units = "in", dpi = 300)
+# # Save as SVG
+# ggsave("../plots/arg_beta_pop.svg", plot = beta_popul, width = 10, height = 8, units = "in")
+
+
+# Save as PNG
+ggsave("../plots/Figure_6.jpg", plot = alpha_beta_arg, width = 16, height = 8, units = "in", dpi = 1200)
 
 # Save as SVG
-ggsave("../plots/arg_beta_pop.svg", plot = beta_popul, width = 10, height = 8, units = "in")
-
+ggsave("../plots/Figure_6.tiff", plot = alpha_beta_arg, width = 16, height = 8, units = "in", dpi = 1200)
 ```
 
-
-```{r, plot_beta_pop}
-
-
-adonis2_rez<-adonis2(tax_bray_amr ~ sample_data(ps_amr_CSS)$Population)
-print(adonis2_rez)
-
-beta <- betadisper(tax_bray_amr, sample_data(ps_amr_CSS)$Population)
-print("BETADISPER")
-print("Population")
-print(anova(beta))
-plot(beta)
-```
 
 ## Hospital
 
@@ -985,8 +1012,8 @@ kruskal.test(alpha_indexes_amr_family$InvSimpson~sample_data(physeq_amr_families
 ```
 
 ```{r, beta_h_type}
-GP.ord2 <- ordinate(ps_amr_CSS, "NMDS", "bray")
-p1 = plot_ordination(ps_amr_CSS, 
+GP.ord2 <- ordinate(physeq_amr_families, "NMDS", "bray")
+p1 = plot_ordination(physeq_amr_families, 
                      GP.ord2, type="samples", 
                      color = "Hospital_Type",
                      title="Hospital_Type bray-distance NMDS")+
@@ -1118,15 +1145,6 @@ kruskal.test(alpha_indexes_ww_impact$Simpson ~ sample_data(ps_amr_ww_impact)$Ind
 ```
 
 
-Find which pairs are important
-
-```{r, dunes_amr}
-dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon, 
-          sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact, 
-          method="bh")
-```
-
-
 #### Industrial_wastewater_impact_from_food
 
 
@@ -1143,18 +1161,10 @@ kruskal.test(alpha_indexes_ww_impact$Shannon ~ sample_data(ps_amr_ww_impact)$Ind
 kruskal.test(alpha_indexes_ww_impact$Simpson ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
 ```
 
-Find which pairs are important
-
-```{r, dunes_food}
-dunn_results <- dunn.test(alpha_indexes_ww_impact$Shannon, 
-          sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food, 
-          method="bh")
-```
-
 
 #### Binary Factor alpha diversity
 
-Municipalities were classefied by Dairy_farming, Meat_production, Metal_processing and car washing facilites connected to wastewater system. 
+Municipalities were classified by Dairy_farming, Meat_production, Metal_processing and car washing facilities connected to wastewater system. 
 
 
 ```{r, wilconx_bin}
@@ -1180,7 +1190,7 @@ wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Meat_pr
 wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Metal_processing,
             p.adjust.method = "BH")
 
-wilcox.test(alpha_indexes_amr$Simpson~sample_data(ps_scaffolds_filtered)$Washrooms, 
+wilcox.test(alpha_indexes_amr$InvSimpson~sample_data(ps_scaffolds_filtered)$Washrooms, 
             p.adjust.method = "BH")
 ```
 
@@ -1203,7 +1213,13 @@ adonis2_rez<-adonis2(tax_bray_ww ~ sample_data(ps_amr_ww_impact)$Industrial_wast
 print(adonis2_rez)
 ```
 
+```{r, disp_beta}
+beta <- betadisper(tax_bray_ww, 
+                   sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact)
 
+print(anova(beta))
+plot(beta)
+```
 
 From Food
 
@@ -1217,8 +1233,6 @@ tax_bray_ww <- phyloseq::distance(ps_amr_ww_impact, method = "bray")
 adonis2_rez<-adonis2(tax_bray_ww ~ sample_data(ps_amr_ww_impact)$Industrial_wastewater_impact_from_food)
 print(adonis2_rez)
 
-
-metadata_col = colnames(sample_data(ps_amr_CSS))[9:12]
 ```
 
 ```{r, disp_beta}
@@ -1234,6 +1248,8 @@ Show rest of the factors.
 
 ```{r, PERMANOVA3}
 set.seed(7)
+
+metadata_col = colnames(sample_data(ps_amr_CSS))[9:13]
 
 for (param in metadata_col){
 # Using Bray-Curtis distance by default
